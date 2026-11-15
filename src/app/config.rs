@@ -23,9 +23,12 @@ pub use user::*;
 
 use super::auth;
 
+pub const DEFAULT_SCAN_EXCLUDE_PATTERN: &str = r"^\.";
+
 #[derive(Debug, Clone, Default)]
 pub struct Config {
 	pub album_art_pattern: Option<Regex>,
+	pub scan_exclude_pattern: Option<Regex>,
 	pub ddns_update_url: Option<http::Uri>,
 	pub mount_dirs: Vec<MountDir>,
 	pub users: Vec<User>,
@@ -45,6 +48,12 @@ impl TryFrom<storage::Config> for Config {
 			None => None,
 		};
 
+		config.scan_exclude_pattern = match c.scan_exclude_pattern.as_deref().map(Regex::new) {
+			Some(Ok(u)) => Some(u),
+			Some(Err(_)) => return Err(Error::ScanExcludePatternInvalid),
+			None => None,
+		};
+
 		config.ddns_update_url = match c.ddns_update_url.map(http::Uri::try_from) {
 			Some(Ok(u)) => Some(u),
 			Some(Err(_)) => return Err(Error::DDNSUpdateURLInvalid),
@@ -59,6 +68,7 @@ impl From<Config> for storage::Config {
 	fn from(c: Config) -> Self {
 		Self {
 			album_art_pattern: c.album_art_pattern.map(|p| p.as_str().to_owned()),
+			scan_exclude_pattern: c.scan_exclude_pattern.map(|p| p.as_str().to_owned()),
 			mount_dirs: c.mount_dirs.into_iter().map(|d| d.into()).collect(),
 			ddns_update_url: c.ddns_update_url.map(|u| u.to_string()),
 			users: c.users.into_iter().map(|u| u.into()).collect(),
@@ -203,6 +213,25 @@ impl Manager {
 	pub async fn set_index_album_art_pattern(&self, regex: Regex) -> Result<(), Error> {
 		self.mutate(|c| {
 			c.album_art_pattern = Some(regex);
+		})
+		.await
+	}
+
+	/// Pattern matched against the names of files and directories that should be skipped
+	/// while scanning the collection. Hidden entries (leading dot) are skipped by default.
+	/// An empty pattern disables exclusion entirely.
+	pub async fn get_scan_exclude_pattern(&self) -> Option<Regex> {
+		let config = self.config.read().await;
+		match &config.scan_exclude_pattern {
+			Some(pattern) if pattern.as_str().is_empty() => None,
+			Some(pattern) => Some(pattern.clone()),
+			None => Some(Regex::new(DEFAULT_SCAN_EXCLUDE_PATTERN).unwrap()),
+		}
+	}
+
+	pub async fn set_scan_exclude_pattern(&self, regex: Regex) -> Result<(), Error> {
+		self.mutate(|c| {
+			c.scan_exclude_pattern = Some(regex);
 		})
 		.await
 	}

@@ -4,6 +4,8 @@
 
 ### Server
 
+- Added a `scan_exclude_pattern` setting to skip files and directories while scanning the collection (eg. Synology `@eaDir` or ZFS `.zfs` folders).
+- ⚠️ Hidden files and directories (names starting with `.`) are no longer indexed by default. Set `scan_exclude_pattern = ""` to restore the previous behavior.
 - Authentication tokens are now invalidated when a user changes their password.
 
 ### General

@@ -23,6 +23,8 @@ pub struct MountDir {
 pub struct Config {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub album_art_pattern: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub scan_exclude_pattern: Option<String>,
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub mount_dirs: Vec<MountDir>,
 	#[serde(skip_serializing_if = "Option::is_none")]

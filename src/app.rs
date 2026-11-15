@@ -85,6 +85,8 @@ pub enum Error {
 	MiscSettingsNotFound,
 	#[error("Index album art pattern is not a valid regex")]
 	IndexAlbumArtPatternInvalid,
+	#[error("Scan exclude pattern is not a valid regex")]
+	ScanExcludePatternInvalid,
 	#[error("DDNS update URL is invalid")]
 	DDNSUpdateURLInvalid,
 

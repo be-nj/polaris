@@ -56,13 +56,41 @@ pub enum State {
 #[derive(Clone)]
 struct Parameters {
 	artwork_regex: Option<Regex>,
+	exclude_regex: Option<Regex>,
 	mount_dirs: Vec<config::MountDir>,
+}
+
+impl Parameters {
+	fn is_excluded(&self, name: &std::ffi::OsStr) -> bool {
+		is_excluded(self.exclude_regex.as_ref(), name)
+	}
+
+	/// Whether a path lives inside an excluded part of a mount directory.
+	fn is_path_excluded(&self, path: &Path) -> bool {
+		if self.exclude_regex.is_none() {
+			return false;
+		}
+		self.mount_dirs
+			.iter()
+			.filter_map(|m| path.strip_prefix(&m.source).ok())
+			.any(|relative_path| {
+				relative_path
+					.components()
+					.any(|c| self.is_excluded(c.as_os_str()))
+			})
+	}
+}
+
+fn is_excluded(exclude_regex: Option<&Regex>, name: &std::ffi::OsStr) -> bool {
+	exclude_regex.is_some_and(|r| name.to_str().is_some_and(|n| r.is_match(n)))
 }
 
 impl PartialEq for Parameters {
 	fn eq(&self, other: &Self) -> bool {
 		self.artwork_regex.as_ref().map(|r| r.as_str())
 			== other.artwork_regex.as_ref().map(|r| r.as_str())
+			&& self.exclude_regex.as_ref().map(|r| r.as_str())
+				== other.exclude_regex.as_ref().map(|r| r.as_str())
 			&& self.mount_dirs == other.mount_dirs
 	}
 }
@@ -144,6 +172,7 @@ impl Scanner {
 
 	async fn setup_file_watcher(
 		config_manager: &config::Manager,
+		parameters: Parameters,
 		on_file_changed: Arc<Notify>,
 	) -> Result<Debouncer<RecommendedWatcher, RecommendedCache>, Error> {
 		let mut debouncer = notify_debouncer_full::new_debouncer(
@@ -154,6 +183,8 @@ impl Scanner {
 					let is_ignorable = |e: &DebouncedEvent| {
 						use EventKind::*;
 						matches!(e.kind, Access(_) | Modify(ModifyKind::Metadata(_)) | Other)
+							|| (!e.paths.is_empty()
+								&& e.paths.iter().all(|p| parameters.is_path_excluded(p)))
 					};
 					if !events.iter().all(is_ignorable) {
 						on_file_changed.notify_waiters();
@@ -191,8 +222,14 @@ impl Scanner {
 	async fn read_parameters(&self) -> Parameters {
 		let album_art_pattern = self.config_manager.get_index_album_art_pattern().await;
 		let artwork_regex = Regex::new(&format!("(?i){}", &album_art_pattern)).ok();
+		let exclude_regex = self
+			.config_manager
+			.get_scan_exclude_pattern()
+			.await
+			.and_then(|p| Regex::new(&format!("(?i){}", &p)).ok());
 		Parameters {
 			artwork_regex,
+			exclude_regex,
 			mount_dirs: self.config_manager.get_mounts().await,
 		}
 	}
@@ -228,7 +265,11 @@ impl Scanner {
 
 		let (scan_directories_output, collection_directories_input) = channel();
 		let (scan_songs_output, collection_songs_input) = channel();
-		let scan = Scan::new(scan_directories_output, scan_songs_output, new_parameters);
+		let scan = Scan::new(
+			scan_directories_output,
+			scan_songs_output,
+			new_parameters.clone(),
+		);
 
 		let mut scan_task_set = JoinSet::new();
 		let mut index_task_set = JoinSet::new();
@@ -240,12 +281,17 @@ impl Scanner {
 		watch_task_set.spawn({
 			let scanner = self.clone();
 			let config_manager = self.config_manager.clone();
+			let parameters = new_parameters.clone();
 			async move {
 				let mut watcher = scanner.file_watcher.write().await;
 				*watcher = None; // Drops previous watcher
 				*watcher = Some(
-					Self::setup_file_watcher(&config_manager, scanner.on_file_change.clone())
-						.await?,
+					Self::setup_file_watcher(
+						&config_manager,
+						parameters,
+						scanner.on_file_change.clone(),
+					)
+					.await?,
 				);
 				Ok(())
 			}
@@ -383,6 +429,7 @@ impl Scan {
 		let directories_output = self.directories_output.clone();
 		let songs_output = self.songs_output.clone();
 		let artwork_regex = self.parameters.artwork_regex.clone();
+		let exclude_regex = self.parameters.exclude_regex.clone();
 
 		let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build()?;
 		thread_pool.scope({
@@ -396,6 +443,7 @@ impl Scan {
 							directories_output.clone(),
 							songs_output.clone(),
 							artwork_regex.clone(),
+							exclude_regex.clone(),
 						);
 					});
 				}
@@ -413,6 +461,7 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 	directories_output: Sender<Directory>,
 	songs_output: Sender<Song>,
 	artwork_regex: Option<Regex>,
+	exclude_regex: Option<Regex>,
 ) {
 	let read_dir = match fs::read_dir(&real_path) {
 		Ok(read_dir) => read_dir,
@@ -454,6 +503,10 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 			}
 		};
 		let name = entry.file_name();
+		if is_excluded(exclude_regex.as_ref(), &name) {
+			continue;
+		}
+
 		let entry_real_path = real_path.as_ref().join(&name);
 		let entry_virtual_path = virtual_path.as_ref().join(&name);
 
@@ -462,6 +515,7 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 				let directories_output = directories_output.clone();
 				let songs_output = songs_output.clone();
 				let artwork_regex = artwork_regex.clone();
+				let exclude_regex = exclude_regex.clone();
 				|scope| {
 					process_directory(
 						scope,
@@ -470,6 +524,7 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 						directories_output,
 						songs_output,
 						artwork_regex,
+						exclude_regex,
 					);
 				}
 			});
@@ -538,6 +593,7 @@ mod test {
 		let (songs_sender, songs_receiver) = channel();
 		let parameters = Parameters {
 			artwork_regex: None,
+			exclude_regex: None,
 			mount_dirs: vec![config::MountDir {
 				source: ["test-data", "small-collection"].iter().collect(),
 				name: "root".to_owned(),
@@ -560,6 +616,7 @@ mod test {
 		let (songs_sender, songs_receiver) = channel();
 		let parameters = Parameters {
 			artwork_regex: None,
+			exclude_regex: None,
 			mount_dirs: vec![config::MountDir {
 				source: ["test-data", "small-collection"].iter().collect(),
 				name: "root".to_owned(),
@@ -585,6 +642,7 @@ mod test {
 			let (songs_sender, songs_receiver) = channel();
 			let parameters = Parameters {
 				artwork_regex: Some(Regex::new(pattern).unwrap()),
+				exclude_regex: None,
 				mount_dirs: vec![config::MountDir {
 					source: ["test-data", "small-collection"].iter().collect(),
 					name: "root".to_owned(),
@@ -600,6 +658,67 @@ mod test {
 				.iter()
 				.any(|s| s.artwork.as_ref() == Some(&artwork_path));
 		}
+	}
+
+	#[tokio::test]
+	async fn scan_skips_excluded_files_and_directories() {
+		let collection_dir = crate::test::prepare_test_directory(test_name!());
+		let sample: PathBuf = ["test-data", "formats", "sample.mp3"].iter().collect();
+		for directory in ["album", ".zfs", "@eaDir", "album/@eaDir"] {
+			let directory = collection_dir.join(directory);
+			fs::create_dir_all(&directory).unwrap();
+			fs::copy(&sample, directory.join("song.mp3")).unwrap();
+		}
+		fs::copy(&sample, collection_dir.join("album").join(".hidden.mp3")).unwrap();
+
+		let run_scan = |exclude_regex: Option<Regex>| {
+			let (directories_sender, directories_receiver) = channel();
+			let (songs_sender, songs_receiver) = channel();
+			let parameters = Parameters {
+				artwork_regex: None,
+				exclude_regex,
+				mount_dirs: vec![config::MountDir {
+					source: collection_dir.clone(),
+					name: "root".to_owned(),
+				}],
+			};
+			Scan::new(directories_sender, songs_sender, parameters)
+				.run()
+				.unwrap();
+			(
+				directories_receiver.iter().count(),
+				songs_receiver.iter().collect::<Vec<_>>(),
+			)
+		};
+
+		let (num_directories, songs) = run_scan(None);
+		assert_eq!(num_directories, 5);
+		assert_eq!(songs.len(), 5);
+
+		let (num_directories, songs) = run_scan(Some(Regex::new(r"(?i)^(\.|@eadir$)").unwrap()));
+		assert_eq!(num_directories, 2);
+		assert_eq!(songs.len(), 1);
+		assert_eq!(
+			songs[0].virtual_path,
+			PathBuf::from_iter(["root", "album", "song.mp3"])
+		);
+	}
+
+	#[test]
+	fn excluded_paths_are_relative_to_mounts() {
+		let parameters = Parameters {
+			artwork_regex: None,
+			exclude_regex: Some(Regex::new(config::DEFAULT_SCAN_EXCLUDE_PATTERN).unwrap()),
+			mount_dirs: vec![config::MountDir {
+				source: PathBuf::from_iter(["home", ".music"]),
+				name: "root".to_owned(),
+			}],
+		};
+		let in_mount = |p: &[&str]| PathBuf::from_iter(["home", ".music"].iter().chain(p));
+		assert!(!parameters.is_path_excluded(&in_mount(&["album", "song.mp3"])));
+		assert!(parameters.is_path_excluded(&in_mount(&[".zfs", "snapshot", "song.mp3"])));
+		assert!(parameters.is_path_excluded(&in_mount(&["album", ".hidden.mp3"])));
+		assert!(!parameters.is_path_excluded(&PathBuf::from_iter(["elsewhere", ".zfs"])));
 	}
 
 	#[tokio::test]

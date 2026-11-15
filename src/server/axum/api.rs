@@ -144,6 +144,11 @@ async fn get_settings(
 			.as_ref()
 			.map(http::Uri::to_string)
 			.unwrap_or_default(),
+		scan_exclude_pattern: config_manager
+			.get_scan_exclude_pattern()
+			.await
+			.map(|r| r.as_str().to_owned())
+			.unwrap_or_default(),
 	};
 	Ok(Json(settings))
 }
@@ -170,6 +175,13 @@ async fn put_settings(
 			return Err(APIError::InvalidAlbumArtPattern);
 		};
 		config_manager.set_index_album_art_pattern(regex).await?;
+	}
+
+	if let Some(pattern) = new_settings.scan_exclude_pattern {
+		let Ok(regex) = Regex::new(pattern.trim()) else {
+			return Err(APIError::InvalidScanExcludePattern);
+		};
+		config_manager.set_scan_exclude_pattern(regex).await?;
 	}
 
 	if let Some(url_string) = new_settings.ddns_update_url {

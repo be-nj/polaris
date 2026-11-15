@@ -34,6 +34,7 @@ impl IntoResponse for APIError {
 			APIError::IncorrectCredentials => StatusCode::UNAUTHORIZED,
 			APIError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
 			APIError::InvalidAlbumArtPattern => StatusCode::BAD_REQUEST,
+			APIError::InvalidScanExcludePattern => StatusCode::BAD_REQUEST,
 			APIError::InvalidDDNSURL => StatusCode::BAD_REQUEST,
 			APIError::Io(_, _) => StatusCode::INTERNAL_SERVER_ERROR,
 			APIError::MultipartError(_, s) => {

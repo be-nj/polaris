@@ -64,6 +64,7 @@ async fn put_settings_golden_path() {
 	let request = protocol::put_settings(dto::NewSettings {
 		album_art_pattern: Some("test_pattern".to_owned()),
 		ddns_update_url: Some("http://example.com/".to_owned()),
+		scan_exclude_pattern: Some("^@eaDir$".to_owned()),
 	});
 	let response = service.fetch(&request).await;
 	assert_eq!(response.status(), StatusCode::OK);
@@ -76,6 +77,37 @@ async fn put_settings_golden_path() {
 		&Settings {
 			album_art_pattern: "test_pattern".to_owned(),
 			ddns_update_url: "http://example.com/".to_owned(),
+			scan_exclude_pattern: "^@eaDir$".to_owned(),
 		},
+	);
+}
+
+#[tokio::test]
+async fn scan_exclude_pattern_defaults_to_hidden_files() {
+	let mut service = ServiceType::new(&test_name!()).await;
+	service.complete_initial_setup().await;
+	service.login_admin().await;
+
+	let request = protocol::get_settings();
+	let response = service.fetch_json::<_, dto::Settings>(&request).await;
+	assert_eq!(response.body().scan_exclude_pattern, r"^\.");
+
+	let request = protocol::put_settings(dto::NewSettings {
+		scan_exclude_pattern: Some("".to_owned()),
+		..Default::default()
+	});
+	assert_eq!(service.fetch(&request).await.status(), StatusCode::OK);
+
+	let request = protocol::get_settings();
+	let response = service.fetch_json::<_, dto::Settings>(&request).await;
+	assert_eq!(response.body().scan_exclude_pattern, "");
+
+	let request = protocol::put_settings(dto::NewSettings {
+		scan_exclude_pattern: Some("(".to_owned()),
+		..Default::default()
+	});
+	assert_eq!(
+		service.fetch(&request).await.status(),
+		StatusCode::BAD_REQUEST
 	);
 }

@@ -193,6 +193,10 @@ pub struct NewSettings {
 	pub album_art_pattern: Option<String>,
 	#[schema(examples("https://myddnsprovider.com?token=abcdef"))]
 	pub ddns_update_url: Option<String>,
+	/// Files and directories whose name matches this regular expression are not indexed. An empty string disables exclusion.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[schema(examples(r"^(\.|@eaDir$)"))]
+	pub scan_exclude_pattern: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -201,6 +205,10 @@ pub struct Settings {
 	pub album_art_pattern: String,
 	#[schema(examples("https://myddnsprovider.com?token=abcdef"))]
 	pub ddns_update_url: String,
+	/// Files and directories whose name matches this regular expression are not indexed. Empty when exclusion is disabled.
+	#[serde(default)]
+	#[schema(examples(r"^\."))]
+	pub scan_exclude_pattern: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

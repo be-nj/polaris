@@ -55,6 +55,8 @@ pub enum APIError {
 	Internal,
 	#[error("Could not parse album art pattern")]
 	InvalidAlbumArtPattern,
+	#[error("Could not parse scan exclude pattern")]
+	InvalidScanExcludePattern,
 	#[error("Could not parse DDNS update URL")]
 	InvalidDDNSURL,
 	#[error("File I/O error for `{0}`:\n\n{1}")]
@@ -138,6 +140,7 @@ impl From<app::Error> for APIError {
 			app::Error::MiscSettingsNotFound => APIError::Internal,
 			app::Error::DDNSUpdateURLInvalid => APIError::InvalidDDNSURL,
 			app::Error::IndexAlbumArtPatternInvalid => APIError::InvalidAlbumArtPattern,
+			app::Error::ScanExcludePatternInvalid => APIError::InvalidScanExcludePattern,
 
 			app::Error::ConfigDeserialization(_) => APIError::Internal,
 			app::Error::ConfigSerialization(_) => APIError::Internal,

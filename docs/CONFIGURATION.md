@@ -17,8 +17,12 @@ The configuration file uses the [TOML](https://toml.io/) format. Everything in t
 ```toml
 # Regular expression used to identify album art in files adjacent to an audio file
 album_art_pattern = "Folder.(jpeg|jpg|png)"
+# Regular expression matched (case-insensitively) against the name of each file and directory found while scanning.
+# Matching entries are skipped, along with everything inside matching directories.
+# Defaults to "^\\." which skips hidden files and directories. Set to "" to index everything.
+scan_exclude_pattern = "^(\\.|@eaDir$)"
 # A URL Polaris will regularly make requests to in order to update Dynamic DNS
-ddns_url = "https://example.com?token=foobar"
+ddns_update_url = "https://example.com?token=foobar"
 
 # Array of locations Polaris should scan to find music files
 [[mount_dirs]]
