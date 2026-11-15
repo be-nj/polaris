@@ -579,3 +579,75 @@ async fn reports_unsupported_features() {
 		assert_eq!(error_code(&response), Some(0));
 	}
 }
+
+#[tokio::test]
+async fn limits_stream_bitrate() {
+	let mut service = make_service(&test_name!()).await;
+
+	service.login_admin().await;
+	let mounts = vec![dto::MountDir {
+		name: "formats".into(),
+		source: "test-data/formats".into(),
+	}];
+	let response = service.fetch(&protocol::put_mount_dirs(mounts)).await;
+	assert_eq!(response.status(), StatusCode::OK);
+	service.index().await;
+	let request = protocol::transcoding();
+	let response = service
+		.fetch_json::<_, dto::TranscodingSupport>(&request)
+		.await;
+	let can_transcode = response.body().available;
+	service.logout().await;
+
+	let params = [("query", ""), ("songCount", "500")];
+	let response = call(&mut service, "search3", &params).await;
+	let songs = &response["searchResult3"]["song"];
+	let flac_id = find(songs, "suffix", "flac")["id"].as_str().unwrap();
+	let mp3_id = find(songs, "suffix", "mp3")["id"].as_str().unwrap();
+	let credentials = [("u", TEST_USERNAME), ("p", TEST_PASSWORD)];
+	let flac = std::fs::read("test-data/formats/sample.flac").unwrap();
+	let mp3 = std::fs::read("test-data/formats/sample.mp3").unwrap();
+
+	let mut fetch = async |id: &str, extra: &[(&str, &str)]| {
+		let mut params = credentials.to_vec();
+		params.push(("id", id));
+		params.extend_from_slice(extra);
+		let response = service
+			.fetch_bytes(&protocol::subsonic("stream", &params))
+			.await;
+		assert_eq!(response.status(), StatusCode::OK);
+		let content_type = response.headers().get(header::CONTENT_TYPE).unwrap();
+		(
+			content_type.to_str().unwrap().to_owned(),
+			response.into_body(),
+		)
+	};
+
+	// Without a bitrate limit, or when explicitly asked to, files are served as they are
+	assert_eq!(
+		fetch(flac_id, &[]).await,
+		("audio/flac".to_owned(), flac.clone())
+	);
+	let params = [("maxBitRate", "0")];
+	assert_eq!(fetch(flac_id, &params).await.1, flac);
+	let params = [("maxBitRate", "64"), ("format", "raw")];
+	assert_eq!(fetch(flac_id, &params).await.1, flac);
+
+	// Files which already satisfy the limit are served as they are
+	let params = [("maxBitRate", "320")];
+	assert_eq!(fetch(mp3_id, &params).await, ("audio/mpeg".to_owned(), mp3));
+
+	let (content_type, body) = fetch(flac_id, &[("maxBitRate", "64")]).await;
+	let (opus_content_type, opus_body) = fetch(flac_id, &[("format", "opus")]).await;
+	if can_transcode {
+		assert_eq!(content_type, "audio/mpeg");
+		assert!(body.starts_with(b"ID3"));
+		assert_eq!(opus_content_type, "audio/ogg");
+		assert!(opus_body.starts_with(b"OggS"));
+	} else {
+		// Servers which cannot transcode fall back to the original file
+		assert_eq!(content_type, "audio/flac");
+		assert_eq!(body, flac);
+		assert_eq!(opus_body, flac);
+	}
+}

@@ -243,6 +243,27 @@ pub fn audio(path: &Path) -> Request<()> {
 		.unwrap()
 }
 
+pub fn audio_transcoded(path: &Path, format: &str, bitrate: u32) -> Request<()> {
+	let path = path.to_string_lossy();
+	let endpoint = format!(
+		"/api/audio/{}?format={format}&bitrate={bitrate}",
+		url_encode(path.as_ref())
+	);
+	Request::builder()
+		.method(Method::GET)
+		.uri(&endpoint)
+		.body(())
+		.unwrap()
+}
+
+pub fn transcoding() -> Request<()> {
+	Request::builder()
+		.method(Method::GET)
+		.uri("/api/transcoding")
+		.body(())
+		.unwrap()
+}
+
 pub fn peaks(path: &Path) -> Request<()> {
 	let path = path.to_string_lossy();
 	let endpoint = format!("/api/peaks/{}", url_encode(path.as_ref()));

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use axum::{
 	extract::{multipart::MultipartError, DefaultBodyLimit, Multipart, Path, Query, State},
-	response::IntoResponse,
+	response::{IntoResponse, Response},
 	routing::get,
 	Json,
 };
@@ -16,7 +16,7 @@ use tower_http::{compression::CompressionLayer, CompressionLevel};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{
-	app::{auth, config, ddns, index, peaks, playlist, scanner, thumbnail, App},
+	app::{auth, config, ddns, index, peaks, playlist, scanner, thumbnail, transcode, App},
 	server::{
 		dto, error::APIError, APIMajorVersion, API_ARRAY_SEPARATOR, API_MAJOR_VERSION,
 		API_MINOR_VERSION,
@@ -24,6 +24,7 @@ use crate::{
 };
 
 use super::auth::{AdminRights, Auth};
+use super::media;
 
 pub fn router() -> OpenApiRouter<App> {
 	OpenApiRouter::new()
@@ -72,6 +73,7 @@ pub fn router() -> OpenApiRouter<App> {
 		// Layers
 		.layer(CompressionLayer::new().quality(CompressionLevel::Fastest))
 		.layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB
+		.routes(routes!(get_transcoding))
 		// Uncompressed
 		.routes(routes!(get_audio))
 }
@@ -1101,35 +1103,66 @@ async fn import_playlists(
 	get,
 	path = "/audio/{*path}",
 	tag = "Media",
-	description = "Serves a music file.\n\nThis endpoint supports HTTP range requests to facilitate streaming.",
+	description = "Serves a music file.\n\nThis endpoint supports HTTP range requests to facilitate streaming.\n\nWhen a `format` is specified, the song is converted to this format and bitrate before being served, which reduces the amount of data transferred. Songs which are already compressed to the requested bitrate or less are served unmodified; the `Content-Type` response header indicates what is being served. While a song is converted for the first time, the response has no `Content-Length` and range requests are only possible from the start of the file.\n\nRequesting a `format` yields a `501` status when transcoding is not available on this server (see `/transcoding`).",
 	security(
 		("auth_token" = []),
 		("auth_query_param" = []),
 	),
-	params(("path", allow_reserved, example = "my_music/beethoven/moonlight_sonata.mp3")),
+	params(
+		("path", allow_reserved, example = "my_music/beethoven/moonlight_sonata.mp3"),
+		dto::AudioOptions
+	),
 	responses(
 		(status = 206, body = [u8]),
 		(status = 200, body = [u8]),
+		(status = 501),
 	)
 )]
 async fn get_audio(
 	_auth: Auth,
-	State(config_manager): State<config::Manager>,
+	State(app): State<App>,
 	Path(path): Path<PathBuf>,
+	Query(options): Query<dto::AudioOptions>,
 	range: Option<TypedHeader<Range>>,
-) -> Result<impl IntoResponse, APIError> {
-	let audio_path = config_manager.resolve_virtual_path(&path).await?;
-
-	let Ok(file) = tokio::fs::File::open(audio_path).await else {
-		return Err(APIError::AudioFileIO);
-	};
-
-	let Ok(body) = KnownSize::file(file).await else {
-		return Err(APIError::AudioFileIO);
-	};
-
+) -> Result<Response, APIError> {
+	let audio_path = app.config_manager.resolve_virtual_path(&path).await?;
 	let range = range.map(|TypedHeader(r)| r);
-	Ok(Ranged::new(range, body))
+
+	if let Some(options) = options.into_transcode_options() {
+		let response = media::transcoded(&app, &path, &audio_path, &options, range.clone()).await?;
+		if let Some(response) = response {
+			return Ok(response);
+		}
+	}
+
+	media::file(&audio_path, range)
+		.await
+		.or(Err(APIError::AudioFileIO))
+}
+
+#[utoipa::path(
+	get,
+	path = "/transcoding",
+	tag = "Media",
+	description = "Describes the ability of this server to convert songs to other formats and bitrates when serving them from the `/audio` endpoint.",
+	security(
+		("auth_token" = []),
+		("auth_query_param" = []),
+	),
+	responses(
+		(status = 200, body = dto::TranscodingSupport),
+	),
+)]
+async fn get_transcoding(
+	_auth: Auth,
+	State(transcode_manager): State<transcode::Manager>,
+) -> Json<dto::TranscodingSupport> {
+	let available = transcode_manager.is_available().await;
+	let formats = match available {
+		true => transcode::Format::ALL.into_iter().map(Into::into).collect(),
+		false => Vec::new(),
+	};
+	Json(dto::TranscodingSupport { available, formats })
 }
 
 #[utoipa::path(

@@ -49,6 +49,8 @@ impl IntoResponse for APIError {
 			APIError::SearchQueryParse => StatusCode::BAD_REQUEST,
 			APIError::ThumbnailFlacDecoding(_, _) => StatusCode::INTERNAL_SERVER_ERROR,
 			APIError::ThumbnailFileIO => StatusCode::NOT_FOUND,
+			APIError::TranscodingUnavailable => StatusCode::NOT_IMPLEMENTED,
+			APIError::TranscodingFailed(_) => StatusCode::INTERNAL_SERVER_ERROR,
 			APIError::ThumbnailId3Decoding(_, _) => StatusCode::INTERNAL_SERVER_ERROR,
 			APIError::ThumbnailImageDecoding(_, _) => StatusCode::INTERNAL_SERVER_ERROR,
 			APIError::ThumbnailMp4Decoding(_, _) => StatusCode::INTERNAL_SERVER_ERROR,

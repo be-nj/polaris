@@ -81,6 +81,10 @@ pub enum APIError {
 	ThumbnailFlacDecoding(PathBuf, metaflac::Error),
 	#[error("Thumbnail file could not be opened")]
 	ThumbnailFileIO,
+	#[error("Audio transcoding is not available on this server")]
+	TranscodingUnavailable,
+	#[error("Could not transcode audio file: {0}")]
+	TranscodingFailed(PathBuf),
 	#[error("Could not decode thumbnail from ID3 tag in `{0}`:\n\n{1}")]
 	ThumbnailId3Decoding(PathBuf, id3::Error),
 	#[error("Could not decode image thumbnail in `{0}`:\n\n{1}")]
@@ -121,6 +125,8 @@ impl From<app::Error> for APIError {
 			app::Error::UnsupportedFormat(f) => APIError::UnsupportedThumbnailFormat(f),
 
 			app::Error::MediaEmpty(p) => APIError::AudioEmpty(p),
+			app::Error::TranscodingUnavailable => APIError::TranscodingUnavailable,
+			app::Error::Transcoding(p) => APIError::TranscodingFailed(p),
 			app::Error::MediaDecode(e) => APIError::AudioDecoding(e),
 			app::Error::MediaDecoder(e) => APIError::AudioDecoding(e),
 			app::Error::MediaPacket(e) => APIError::AudioDecoding(e),

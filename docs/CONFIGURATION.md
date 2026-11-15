@@ -21,6 +21,8 @@ album_art_pattern = "Folder.(jpeg|jpg|png)"
 # Matching entries are skipped, along with everything inside matching directories.
 # Defaults to "^\\." which skips hidden files and directories. Set to "" to index everything.
 scan_exclude_pattern = "^(\\.|@eaDir$)"
+# Maximum disk space (in megabytes) used to keep transcoded songs around. Defaults to 1024.
+transcode_cache_size_mb = 2048
 # A URL Polaris will regularly make requests to in order to update Dynamic DNS
 ddns_update_url = "https://example.com?token=foobar"
 

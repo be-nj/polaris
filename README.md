@@ -48,6 +48,7 @@ The goals of this project are:
 - 📒 [Changelog](CHANGELOG.md)
 - 🔧 [Configuration](docs/CONFIGURATION.md)
 - 📻 [Using Subsonic clients](docs/SUBSONIC.md)
+- 🎚️ [Transcoding](docs/TRANSCODING.md)
 - 👷 [Contribute to Polaris](CONTRIBUTING.md)
 - 🛟 [Maintenance Runbooks](docs/MAINTENANCE.md)
 

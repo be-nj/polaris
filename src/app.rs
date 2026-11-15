@@ -17,6 +17,7 @@ pub mod peaks;
 pub mod playlist;
 pub mod scanner;
 pub mod thumbnail;
+pub mod transcode;
 
 #[cfg(test)]
 pub mod test;
@@ -50,6 +51,11 @@ pub enum Error {
 	Image(PathBuf, image::error::ImageError),
 	#[error("This file format is not supported: {0}")]
 	UnsupportedFormat(&'static str),
+
+	#[error("Audio transcoding requires ffmpeg, which could not be found on this system")]
+	TranscodingUnavailable,
+	#[error("Could not transcode audio file: {0}")]
+	Transcoding(PathBuf),
 
 	#[error("No tracks found in audio file: {0}")]
 	MediaEmpty(PathBuf),
@@ -165,6 +171,7 @@ pub struct App {
 	pub peaks_manager: peaks::Manager,
 	pub playlist_manager: playlist::Manager,
 	pub thumbnail_manager: thumbnail::Manager,
+	pub transcode_manager: transcode::Manager,
 }
 
 impl App {
@@ -195,6 +202,15 @@ impl App {
 			playlist::Manager::new(config_manager.clone(), index_manager.clone(), ndb_manager);
 		let thumbnail_manager = thumbnail::Manager::new(thumbnails_dir_path);
 
+		let ffmpeg_path = std::env::var_os("POLARIS_FFMPEG_PATH")
+			.map(PathBuf::from)
+			.unwrap_or_else(|| PathBuf::from("ffmpeg"));
+		let transcode_manager = transcode::Manager::new(
+			paths.cache_dir_path.join("transcodes"),
+			ffmpeg_path,
+			config_manager.clone(),
+		);
+
 		let app = Self {
 			socket_address,
 			web_dir_path: paths.web_dir_path,
@@ -205,6 +221,7 @@ impl App {
 			peaks_manager,
 			playlist_manager,
 			thumbnail_manager,
+			transcode_manager,
 		};
 
 		Ok(app)

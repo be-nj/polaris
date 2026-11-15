@@ -47,6 +47,7 @@ Two layers: `src/app` (domain logic, no HTTP) and `src/server` (HTTP API on axum
 - `scanner::Scanner` — walks mount directories and produces a new index. Depends on config and index managers.
 - `ndb::Manager` — a `native_db` embedded database (`polaris.ndb`). Currently only playlists are stored in it; models are versioned (`playlist::v1::PlaylistModel`) and registered in `ndb.rs`.
 - `playlist::Manager`, `peaks::Manager` (audio waveform data), `thumbnail::Manager`, `ddns::Manager`. Peaks and thumbnails are generated on demand and cached on disk under the cache directory.
+- `transcode::Manager` — on-demand transcoding through an external `ffmpeg` process (path from `POLARIS_FFMPEG_PATH`, disabled when not found). Output is written to a size-limited disk cache and can be read while it is still being produced; concurrent requests for the same output share one job. `server/axum/media.rs` turns this into HTTP responses for both the Polaris and Subsonic APIs. Tests needing ffmpeg skip themselves when it is not installed.
 - `formats.rs` — tag reading per audio format, dispatched by file extension, producing a common `SongMetadata`.
 
 All domain errors are variants of the single `app::Error` enum.

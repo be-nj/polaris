@@ -19,6 +19,7 @@ Clients that support OpenSubsonic API keys can be given a Polaris authentication
 - Random songs and songs by genre
 - Search
 - Streaming and downloading songs, with support for seeking
+- Bitrate limits (`maxBitRate`), when [transcoding](TRANSCODING.md) is available. Without it, songs are streamed as they are.
 - Album art
 - Playlists (each user only sees their own playlists)
 - Collection scan status, and triggering a scan (administrators only)

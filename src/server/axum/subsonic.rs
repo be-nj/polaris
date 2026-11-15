@@ -14,21 +14,22 @@ use std::time::UNIX_EPOCH;
 use axum::{
 	body::Bytes,
 	extract::{Path, RawQuery, State},
-	response::{IntoResponse, Response},
+	response::Response,
 	routing::get,
 	Router,
 };
 use axum_extra::{headers::Range, TypedHeader};
-use axum_range::{KnownSize, Ranged};
 use http::{header, HeaderMap, HeaderValue};
 use rand::seq::SliceRandom;
 use serde_json::{json, Map, Value};
 
-use crate::app::{auth, index, scanner, thumbnail, App};
+use crate::app::{self, auth, index, scanner, thumbnail, transcode, App};
 
 mod id;
 mod model;
 mod response;
+
+use super::media;
 
 use id::Id;
 use response::{Error, Format, Payload};
@@ -859,6 +860,24 @@ async fn delete_playlist(request: &Request) -> Result<Reply, Error> {
 	Reply::empty()
 }
 
+/// Subsonic clients cap the bitrate of what they stream with `maxBitRate`, and may ask for
+/// a specific `format` (`raw` being the file exactly as it exists on disk).
+fn transcode_options(params: &Params) -> Option<transcode::Options> {
+	let format = params.get("format");
+	if format == Some("raw") {
+		return None;
+	}
+	let format = format.and_then(transcode::Format::from_name);
+	let max_bitrate = params.number::<u32>("maxBitRate").filter(|b| *b > 0);
+	match (format, max_bitrate) {
+		(None, None) => None,
+		(format, max_bitrate) => Some(transcode::Options::new(
+			format.unwrap_or(transcode::Format::Mp3),
+			max_bitrate,
+		)),
+	}
+}
+
 async fn stream(request: &Request, as_attachment: bool) -> Result<Reply, Error> {
 	let Id::Song(virtual_path) = request.params.id("id")? else {
 		return Err(Error::not_found());
@@ -869,14 +888,28 @@ async fn stream(request: &Request, as_attachment: bool) -> Result<Reply, Error> 
 		.config_manager
 		.resolve_virtual_path(&virtual_path)
 		.await?;
-	let file = tokio::fs::File::open(&audio_path)
-		.await
-		.map_err(|_| Error::not_found())?;
-	let body = KnownSize::file(file)
-		.await
-		.map_err(|_| Error::not_found())?;
 
-	let mut response = Ranged::new(request.range.clone(), body).into_response();
+	let options = match as_attachment {
+		true => None,
+		false => transcode_options(&request.params),
+	};
+	if let Some(options) = options {
+		let range = request.range.clone();
+		let response =
+			media::transcoded(&request.app, &virtual_path, &audio_path, &options, range).await;
+		match response {
+			Ok(Some(response)) => return Ok(Reply::Binary(response)),
+			Ok(None) => (),
+			// Bitrate limits are a preference: when this server cannot transcode, clients
+			// are better served by the original file than by an error.
+			Err(app::Error::TranscodingUnavailable) => (),
+			Err(e) => return Err(e.into()),
+		}
+	}
+
+	let mut response = media::file(&audio_path, request.range.clone())
+		.await
+		.map_err(|_| Error::not_found())?;
 	let headers = response.headers_mut();
 	if let Some(content_type) = model::content_type(&audio_path) {
 		headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
@@ -935,14 +968,9 @@ async fn get_cover_art(request: &Request) -> Result<Reply, Error> {
 		.get_thumbnail(&image_path, &options)
 		.await?;
 
-	let file = tokio::fs::File::open(thumbnail_path)
+	let mut response = media::file(&thumbnail_path, request.range.clone())
 		.await
 		.map_err(|_| Error::not_found())?;
-	let body = KnownSize::file(file)
-		.await
-		.map_err(|_| Error::not_found())?;
-
-	let mut response = Ranged::new(request.range.clone(), body).into_response();
 	response
 		.headers_mut()
 		.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));

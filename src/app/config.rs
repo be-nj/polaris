@@ -21,7 +21,7 @@ mod user;
 pub use mounts::*;
 pub use user::*;
 
-use super::auth;
+use super::{auth, transcode};
 
 pub const DEFAULT_SCAN_EXCLUDE_PATTERN: &str = r"^\.";
 
@@ -29,6 +29,7 @@ pub const DEFAULT_SCAN_EXCLUDE_PATTERN: &str = r"^\.";
 pub struct Config {
 	pub album_art_pattern: Option<Regex>,
 	pub scan_exclude_pattern: Option<Regex>,
+	pub transcode_cache_size_mb: Option<u64>,
 	pub ddns_update_url: Option<http::Uri>,
 	pub mount_dirs: Vec<MountDir>,
 	pub users: Vec<User>,
@@ -54,6 +55,8 @@ impl TryFrom<storage::Config> for Config {
 			None => None,
 		};
 
+		config.transcode_cache_size_mb = c.transcode_cache_size_mb;
+
 		config.ddns_update_url = match c.ddns_update_url.map(http::Uri::try_from) {
 			Some(Ok(u)) => Some(u),
 			Some(Err(_)) => return Err(Error::DDNSUpdateURLInvalid),
@@ -69,6 +72,7 @@ impl From<Config> for storage::Config {
 		Self {
 			album_art_pattern: c.album_art_pattern.map(|p| p.as_str().to_owned()),
 			scan_exclude_pattern: c.scan_exclude_pattern.map(|p| p.as_str().to_owned()),
+			transcode_cache_size_mb: c.transcode_cache_size_mb,
 			mount_dirs: c.mount_dirs.into_iter().map(|d| d.into()).collect(),
 			ddns_update_url: c.ddns_update_url.map(|u| u.to_string()),
 			users: c.users.into_iter().map(|u| u.into()).collect(),
@@ -234,6 +238,14 @@ impl Manager {
 			c.scan_exclude_pattern = Some(regex);
 		})
 		.await
+	}
+
+	/// Maximum amount of disk space used to keep transcoded audio files around
+	pub async fn get_transcode_cache_size_mb(&self) -> u64 {
+		let config = self.config.read().await;
+		config
+			.transcode_cache_size_mb
+			.unwrap_or(transcode::DEFAULT_CACHE_SIZE_MB)
 	}
 
 	pub async fn get_ddns_update_url(&self) -> Option<http::Uri> {

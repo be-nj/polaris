@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use crate::app::{config, index, peaks, playlist, scanner, thumbnail};
+use crate::app::{config, index, peaks, playlist, scanner, thumbnail, transcode};
 use std::{collections::HashMap, convert::From, path::PathBuf, time::UNIX_EPOCH};
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, ToSchema)]
@@ -60,6 +60,59 @@ impl From<ThumbnailOptions> for thumbnail::Options {
 		options.pad_to_square = dto.pad.unwrap_or(options.pad_to_square);
 		options
 	}
+}
+
+#[derive(Serialize, Deserialize, IntoParams, ToSchema)]
+pub struct AudioOptions {
+	/// Audio format to convert the song to. When omitted, the song is served as it exists on disk.
+	pub format: Option<TranscodeFormat>,
+	/// Target bitrate of the converted audio, in kilobits per second.
+	#[schema(examples(128))]
+	pub bitrate: Option<u32>,
+}
+
+impl AudioOptions {
+	pub fn into_transcode_options(self) -> Option<transcode::Options> {
+		self.format
+			.map(|format| transcode::Options::new(format.into(), self.bitrate))
+	}
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(example = "mp3")]
+pub enum TranscodeFormat {
+	Mp3,
+	Opus,
+	Aac,
+}
+
+impl From<TranscodeFormat> for transcode::Format {
+	fn from(format: TranscodeFormat) -> Self {
+		match format {
+			TranscodeFormat::Mp3 => Self::Mp3,
+			TranscodeFormat::Opus => Self::Opus,
+			TranscodeFormat::Aac => Self::Aac,
+		}
+	}
+}
+
+impl From<transcode::Format> for TranscodeFormat {
+	fn from(format: transcode::Format) -> Self {
+		match format {
+			transcode::Format::Mp3 => Self::Mp3,
+			transcode::Format::Opus => Self::Opus,
+			transcode::Format::Aac => Self::Aac,
+		}
+	}
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct TranscodingSupport {
+	/// Whether this server is able to convert audio to other formats and bitrates.
+	pub available: bool,
+	/// Formats audio can be converted to. Empty when transcoding is not available.
+	pub formats: Vec<TranscodeFormat>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, ToSchema)]
