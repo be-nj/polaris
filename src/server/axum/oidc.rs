@@ -99,12 +99,20 @@ async fn get_providers(State(app): State<App>) -> Json<Vec<dto::OidcProvider>> {
 	Json(providers)
 }
 
+#[derive(Deserialize)]
+struct StartParameters {
+	return_to: Option<String>,
+}
+
 #[utoipa::path(
 	get,
 	path = "/oidc/{provider}/start",
 	tag = "User Management",
 	description = "Starts signing in with a single sign-on provider.\n\nThis endpoint is meant to be navigated to by a web browser. It redirects to the sign-in page of the provider, which eventually redirects to the `callback` endpoint.",
-	params(("provider", example = "authelia")),
+	params(
+		("provider", example = "authelia"),
+		("return_to" = Option<String>, Query, description = "Where to send the user once signed in, instead of the start page of the web client. Must be a path within this server (starting with a single `/`, for example `/#/albums`); anything else is ignored."),
+	),
 	responses(
 		(status = 303, description = "Redirection to the sign-in page of the provider"),
 		(status = 404, description = "Unknown provider"),
@@ -114,12 +122,18 @@ async fn get_providers(State(app): State<App>) -> Json<Vec<dto::OidcProvider>> {
 async fn get_start(
 	State(app): State<App>,
 	Path(provider): Path<String>,
+	Query(parameters): Query<StartParameters>,
 	headers: HeaderMap,
 ) -> Result<Response, APIError> {
 	let public_url = get_public_url(&app, &headers).await;
 	let redirect_uri = format!("{public_url}/api/oidc/{provider}/callback");
+	let return_to = parameters.return_to.as_deref();
 
-	let start = match app.oidc_manager.begin_login(&provider, redirect_uri).await {
+	let start = app
+		.oidc_manager
+		.begin_login(&provider, redirect_uri, return_to)
+		.await;
+	let start = match start {
 		Ok(start) => start,
 		Err(e) => {
 			error!("Could not start OpenID Connect sign-in with `{provider}`: {e}");
@@ -277,19 +291,24 @@ fn login_page_html(login: &oidc::Login) -> Html<String> {
 		"authToken": login.token.0,
 		"isAdmin": login.is_admin,
 	});
-	// Prevents the session data from being interpreted as markup
-	let session = session
-		.to_string()
-		.replace('<', "\\u003c")
-		.replace('>', "\\u003e")
-		.replace('&', "\\u0026");
+	let return_to = json!(login.return_to.as_deref().unwrap_or("/"));
+	// Prevents the embedded data from being interpreted as markup
+	let embed = |value: serde_json::Value| {
+		value
+			.to_string()
+			.replace('<', "\\u003c")
+			.replace('>', "\\u003e")
+			.replace('&', "\\u0026")
+	};
+	let session = embed(session);
+	let return_to = embed(return_to);
 
 	let body = format!(
 		r#"<p>Signing in…</p>
 <noscript><p>JavaScript is required to complete signing in.</p></noscript>
 <script>
 localStorage.setItem("current_user", JSON.stringify({session}));
-window.location.replace("/");
+window.location.replace({return_to});
 </script>"#
 	);
 	page("Polaris", &body)
@@ -329,10 +348,14 @@ mod test {
 			username: "</script><script>alert(1)</script>".to_owned(),
 			token: app::auth::Token("token".to_owned()),
 			is_admin: false,
+			return_to: Some("/#/songs/</script><script>alert(2)</script>".to_owned()),
 		};
 		let Html(html) = login_page_html(&login);
 		assert_eq!(html.matches("<script>").count(), 1);
 		assert_eq!(html.matches("</script>").count(), 1);
 		assert!(html.contains(r#""name":"\u003c/script\u003e\u003cscript\u003ealert(1)"#));
+		assert!(html.contains(
+			r#"window.location.replace("/#/songs/\u003c/script\u003e\u003cscript\u003ealert(2)"#
+		));
 	}
 }

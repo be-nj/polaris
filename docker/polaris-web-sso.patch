@@ -1,14 +1,14 @@
 diff --git a/src/components/Auth.vue b/src/components/Auth.vue
-index fcf1af2..ee7e14a 100644
+index fcf1af2..107b564 100644
 --- a/src/components/Auth.vue
 +++ b/src/components/Auth.vue
-@@ -13,12 +13,19 @@
+@@ -13,15 +13,23 @@
  				<Button label="Sign In" type="submit" size="xl" data-pw="submit-login" class="w-full"
  					:disabled="!username || !password" />
  			</form>
 +			<div v-if="ssoProviders.length" class="mt-8 space-y-3">
 +				<div class="text-center text-sm text-ls-500 dark:text-ds-400">or</div>
-+				<a v-for="provider in ssoProviders" :key="provider.name" :href="provider.login_url" data-pw="sso-login"
++				<a v-for="provider in ssoProviders" :key="provider.name" :href="makeSSOLoginURL(provider)" data-pw="sso-login"
 +					class="flex w-full items-center justify-center rounded-md px-3.5 py-2.5 text-sm font-semibold whitespace-nowrap shadow-sm bg-ls-0 hover:bg-ls-50 text-ls-900 ring-1 ring-inset ring-ls-300 dark:bg-ds-0/10 dark:hover:bg-ds-0/20 dark:text-ds-0 dark:ring-0">
 +					Sign in with {{ provider.display_name }}
 +				</a>
@@ -23,7 +23,11 @@ index fcf1af2..ee7e14a 100644
  
  import Button from "@/components/basic/Button.vue";
  import InputText from "@/components/basic/InputText.vue";
-@@ -30,6 +37,22 @@ const username = ref("");
++import { getReturnTo } from "@/router";
+ import { useUserStore } from "@/stores/user";
+ 
+ const user = useUserStore();
+@@ -30,6 +38,31 @@ const username = ref("");
  const password = ref("");
  const badCredentials = ref(false);
  
@@ -34,6 +38,15 @@ index fcf1af2..ee7e14a 100644
 +	login_url: string,
 +}
 +const ssoProviders = ref<SSOProvider[]>([]);
++// Asks to be sent back to the page that was requested before signing in
++function makeSSOLoginURL(provider: SSOProvider) {
++	const returnTo = getReturnTo();
++	if (!returnTo) {
++		return provider.login_url;
++	}
++	return `${provider.login_url}?return_to=${encodeURIComponent("/#" + returnTo)}`;
++}
++
 +onMounted(async () => {
 +	try {
 +		const response = await fetch("api/oidc/providers");
@@ -46,3 +59,62 @@ index fcf1af2..ee7e14a 100644
  async function doLogin(event: Event) {
  	badCredentials.value = false;
  	try {
+diff --git a/src/router.ts b/src/router.ts
+index e3f279a..ec38b8d 100644
+--- a/src/router.ts
++++ b/src/router.ts
+@@ -108,6 +108,31 @@ const router = createRouter({
+ 	routes,
+ });
+ 
++// Page that was requested while signed out, to be opened after signing in.
++// This lives in session storage so that it survives the round-trip to a single sign-on provider.
++const returnToKey = "polaris_return_to";
++
++function rememberReturnTo(path: string) {
++	try {
++		sessionStorage.setItem(returnToKey, path);
++	} catch (e) { }
++}
++
++export function getReturnTo(): string | null {
++	try {
++		const path = sessionStorage.getItem(returnToKey);
++		return path && path != "/" ? path : null;
++	} catch (e) {
++		return null;
++	}
++}
++
++function clearReturnTo() {
++	try {
++		sessionStorage.removeItem(returnToKey);
++	} catch (e) { }
++}
++
+ router.beforeEach(async (to, from, next) => {
+ 	const initialSetup = useInitialSetupStore();
+ 
+@@ -128,6 +153,7 @@ router.beforeEach(async (to, from, next) => {
+ 	// Re-route to auth if needed
+ 	if (to.matched.some(record => record.meta.requiresAuth)) {
+ 		if (!isLoggedIn) {
++			rememberReturnTo(to.fullPath);
+ 			return next("/auth");
+ 		}
+ 	}
+@@ -148,7 +174,13 @@ router.beforeEach(async (to, from, next) => {
+ 
+ 	// Default entry-point
+ 	if (to.path == "/") {
+-		return next("/files");
++		const returnTo = isLoggedIn ? getReturnTo() : null;
++		clearReturnTo();
++		return next(returnTo || "/files");
++	}
++
++	if (isLoggedIn) {
++		clearReturnTo();
+ 	}
+ 
+ 	next();

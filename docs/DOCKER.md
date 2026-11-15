@@ -72,4 +72,4 @@ From a checkout of this repository:
 docker build -t polaris .
 ```
 
-The `POLARIS_WEB_REF` build argument selects the version (a tag of the [polaris-web](https://github.com/agersant/polaris-web) repository) of the web client included in the image. The patch in `docker/polaris-web-sso.patch`, which adds single sign-on buttons to the login page, is applied on top of it.
+The `POLARIS_WEB_REF` build argument selects the version (a tag of the [polaris-web](https://github.com/agersant/polaris-web) repository) of the web client included in the image. The patch in `docker/polaris-web-sso.patch` is applied on top of it. It adds single sign-on buttons to the login page, and makes the web client return to the page that was requested before signing in.

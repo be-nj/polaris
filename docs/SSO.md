@@ -10,6 +10,8 @@ Signing in with a username and password keeps working alongside single sign-on.
 2. Polaris redirects to the sign-in page of the provider.
 3. After signing in, the provider redirects back to Polaris, which opens the web client with the user signed in.
 
+Someone who opens a link to a specific page of the web client while signed out ends up on that page after signing in. Links that start the sign-in directly can do the same with a `return_to` parameter, for example `https://your-polaris-server/api/oidc/PROVIDER_NAME/start?return_to=/%23/albums`. Only locations within the Polaris server are accepted; anything else is ignored.
+
 A Polaris user is created the first time someone signs in. Their name is taken from the provider (the `preferred_username` claim by default).
 
 ## Configuration

@@ -108,6 +108,14 @@ fn read_session(page: &[u8]) -> serde_json::Value {
 	serde_json::from_str(session).unwrap()
 }
 
+/// Reads where the page ending a sign-in sends the browser to.
+fn read_destination(page: &[u8]) -> String {
+	let page = std::str::from_utf8(page).unwrap();
+	let (_, destination) = page.split_once("window.location.replace(").unwrap();
+	let (destination, _) = destination.split_once(");").unwrap();
+	serde_json::from_str(destination).unwrap()
+}
+
 #[tokio::test]
 async fn lists_no_providers_by_default() {
 	let mut service = ServiceType::new(&test_name!()).await;
@@ -169,6 +177,7 @@ async fn login_golden_path() {
 	let session = read_session(response.body());
 	assert_eq!(session["name"], "alice");
 	assert_eq!(session["isAdmin"], false);
+	assert_eq!(read_destination(response.body()), "/");
 
 	// The session works with the rest of the API
 	service.set_authorization(Some(dto::Authorization {
@@ -287,4 +296,44 @@ async fn login_reports_failures() {
 	let request = protocol::list_users();
 	let response = service.fetch_json::<_, Vec<dto::User>>(&request).await;
 	assert_eq!(response.body().len(), 1);
+}
+
+#[tokio::test]
+async fn login_returns_to_requested_location() {
+	let (mut service, provider) = make_service(&test_name!(), "").await;
+
+	let deep_link = "/#/songs/Musik%2Fdire-straits%2F02_money-for-nothing.flac";
+	let request = protocol::oidc_start_returning_to(PROVIDER, deep_link);
+	let attempt = start_login(&mut service, request).await;
+	// The location stays on this server, and is not disclosed to the provider
+	assert!(!attempt.authorization_url.contains("money-for-nothing"));
+
+	let code = provider.authorize(&attempt.authorization_url);
+	let response = service.fetch_bytes(&callback(&attempt, &code)).await;
+	assert_eq!(response.status(), StatusCode::OK);
+	assert_eq!(read_destination(response.body()), deep_link);
+	assert_eq!(read_session(response.body())["name"], "alice");
+}
+
+#[tokio::test]
+async fn login_does_not_redirect_to_other_sites() {
+	let (mut service, provider) = make_service(&test_name!(), "").await;
+
+	let other_sites = [
+		"https://evil.example.com/",
+		"//evil.example.com/",
+		"/\\evil.example.com/",
+		"/\t/evil.example.com/",
+		"javascript:alert(1)",
+		"evil.example.com",
+	];
+	for return_to in other_sites {
+		let request = protocol::oidc_start_returning_to(PROVIDER, return_to);
+		let attempt = start_login(&mut service, request).await;
+		let code = provider.authorize(&attempt.authorization_url);
+		let response = service.fetch_bytes(&callback(&attempt, &code)).await;
+		// Signing in still works, and leads to the start page of the web client
+		assert_eq!(response.status(), StatusCode::OK, "{return_to:?}");
+		assert_eq!(read_destination(response.body()), "/", "{return_to:?}");
+	}
 }

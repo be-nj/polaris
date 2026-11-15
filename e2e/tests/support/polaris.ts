@@ -37,3 +37,13 @@ export async function expectSignedIn(page: Page): Promise<Session> {
 	expect(session).not.toBeNull();
 	return session!;
 }
+
+/** Path of a song of the test collection, and the address of its page in the web client */
+export const SONG_PATH = "collection/Khemmis/Hunted/02 - Candlelight.mp3";
+export const SONG_PAGE = `/#/songs/${encodeURIComponent(SONG_PATH)}`;
+
+/** Waits for the web client to show the page of the test song. */
+export async function expectSongPage(page: Page) {
+	await page.waitForURL((url) => decodeURIComponent(url.hash) === `#/songs/${SONG_PATH}`);
+	await expect(page.getByText("Candlelight").first()).toBeVisible();
+}

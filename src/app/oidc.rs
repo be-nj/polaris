@@ -46,6 +46,7 @@ struct TokenResponse {
 struct PendingLogin {
 	provider_name: String,
 	redirect_uri: String,
+	return_to: Option<String>,
 	nonce: String,
 	code_verifier: String,
 	started: Instant,
@@ -63,6 +64,8 @@ pub struct Login {
 	pub username: String,
 	pub token: auth::Token,
 	pub is_admin: bool,
+	/// Location within this server the user asked to be sent to once signed in
+	pub return_to: Option<String>,
 }
 
 #[derive(Clone)]
@@ -115,10 +118,14 @@ impl Manager {
 
 	/// Starts a sign-in with the specified provider. The identity provider will send the
 	/// user back to `redirect_uri` after they have signed in.
+	///
+	/// `return_to` is where the user wishes to end up once signed in. It is only honored
+	/// when it designates a location within this server (see [`sanitize_return_to`]).
 	pub async fn begin_login(
 		&self,
 		provider_name: &str,
 		redirect_uri: String,
+		return_to: Option<&str>,
 	) -> Result<LoginStart, Error> {
 		let provider = self.get_provider(provider_name).await?;
 		let discovery = self.discover(&provider).await?;
@@ -164,6 +171,7 @@ impl Manager {
 				PendingLogin {
 					provider_name: provider.name.clone(),
 					redirect_uri,
+					return_to: return_to.and_then(sanitize_return_to),
 					nonce,
 					code_verifier,
 					started: Instant::now(),
@@ -194,6 +202,7 @@ impl Manager {
 		let provider = self.get_provider(provider_name).await?;
 		let discovery = self.discover(&provider).await?;
 
+		let return_to = pending_login.return_to.clone();
 		let claims = spawn_blocking({
 			let provider = provider.clone();
 			let code = code.to_owned();
@@ -244,7 +253,25 @@ impl Manager {
 			username,
 			token,
 			is_admin,
+			return_to,
 		})
+	}
+}
+
+/// Accepts locations a user may be sent to after signing in, which must be within this
+/// server. Anything a browser could interpret as leading to another site is rejected,
+/// otherwise links to this server could be crafted to redirect to arbitrary websites.
+pub fn sanitize_return_to(return_to: &str) -> Option<String> {
+	const MAX_LENGTH: usize = 2000;
+	// Only absolute paths are within this server for sure. Two leading slashes begin a
+	// host name, and browsers treat backslashes like slashes.
+	let is_absolute_path = return_to.starts_with('/') && !return_to.starts_with("//");
+	// Browsers remove tabs and line breaks from URLs before interpreting them
+	let has_forbidden_character = return_to.chars().any(|c| c == '\\' || c.is_control());
+	if is_absolute_path && !has_forbidden_character && return_to.len() <= MAX_LENGTH {
+		Some(return_to.to_owned())
+	} else {
+		None
 	}
 }
 
@@ -818,7 +845,7 @@ mod test {
 		async fn login(&self) -> Result<Login, Error> {
 			let start = self
 				.manager
-				.begin_login("test", REDIRECT_URI.to_owned())
+				.begin_login("test", REDIRECT_URI.to_owned(), None)
 				.await?;
 			let code = self.provider.authorize(&start.authorization_url);
 			self.manager
@@ -991,13 +1018,13 @@ mod test {
 
 		let result = ctx
 			.manager
-			.begin_login("nope", REDIRECT_URI.to_owned())
+			.begin_login("nope", REDIRECT_URI.to_owned(), None)
 			.await;
 		assert!(matches!(result, Err(Error::OidcProviderNotFound)));
 
 		let start = ctx
 			.manager
-			.begin_login("test", REDIRECT_URI.to_owned())
+			.begin_login("test", REDIRECT_URI.to_owned(), None)
 			.await
 			.unwrap();
 		let code = ctx.provider.authorize(&start.authorization_url);
@@ -1018,7 +1045,7 @@ mod test {
 		let ctx = Context::new(test_name!(), |_| ()).await;
 		let start = ctx
 			.manager
-			.begin_login("test", REDIRECT_URI.to_owned())
+			.begin_login("test", REDIRECT_URI.to_owned(), None)
 			.await
 			.unwrap();
 		let code = ctx.provider.authorize(&start.authorization_url);
@@ -1038,12 +1065,12 @@ mod test {
 		let ctx = Context::new(test_name!(), |_| ()).await;
 		let first = ctx
 			.manager
-			.begin_login("test", REDIRECT_URI.to_owned())
+			.begin_login("test", REDIRECT_URI.to_owned(), None)
 			.await
 			.unwrap();
 		let second = ctx
 			.manager
-			.begin_login("test", REDIRECT_URI.to_owned())
+			.begin_login("test", REDIRECT_URI.to_owned(), None)
 			.await
 			.unwrap();
 		// PKCE ties each code to the attempt which requested it
@@ -1095,6 +1122,76 @@ mod test {
 			ctx.login().await,
 			Err(Error::OidcInvalidResponse(_))
 		));
+	}
+
+	#[tokio::test]
+	async fn remembers_where_to_return_to() {
+		let ctx = Context::new(test_name!(), |_| ()).await;
+		let login_with = async |return_to: Option<&'static str>| {
+			let start = ctx
+				.manager
+				.begin_login("test", REDIRECT_URI.to_owned(), return_to)
+				.await
+				.unwrap();
+			// The location is kept on the server, and is not part of what the provider sees
+			assert!(!start.authorization_url.contains("albums"));
+			let code = ctx.provider.authorize(&start.authorization_url);
+			let login = ctx
+				.manager
+				.complete_login("test", &start.state, &code)
+				.await;
+			login.unwrap().return_to
+		};
+
+		assert_eq!(login_with(None).await, None);
+		assert_eq!(
+			login_with(Some("/#/albums")).await.as_deref(),
+			Some("/#/albums")
+		);
+		assert_eq!(login_with(Some("https://evil.example.com/")).await, None);
+	}
+
+	#[test]
+	fn only_returns_to_locations_within_this_server() {
+		let accepted = [
+			"/",
+			"/#/albums",
+			"/#/songs/Musik%2Fdire-straits%2F02_money-for-nothing.flac",
+			"/#/search?query=a b",
+			"/some/path?next=https://example.com",
+			"/%2F/example.com",
+		];
+		for return_to in accepted {
+			assert_eq!(
+				sanitize_return_to(return_to).as_deref(),
+				Some(return_to),
+				"{return_to}"
+			);
+		}
+
+		let rejected = [
+			"",
+			"#/albums",
+			"albums",
+			"https://evil.example.com/",
+			"http://evil.example.com",
+			"//evil.example.com",
+			"///evil.example.com",
+			"/\\evil.example.com",
+			"/\\/evil.example.com",
+			"\\\\evil.example.com",
+			"/\t/evil.example.com",
+			"/\n/evil.example.com",
+			"\t//evil.example.com",
+			" //evil.example.com",
+			"javascript:alert(1)",
+			"data:text/html,hello",
+			"/#/albums\\..\\evil",
+		];
+		for return_to in rejected {
+			assert_eq!(sanitize_return_to(return_to), None, "{return_to:?}");
+		}
+		assert_eq!(sanitize_return_to(&format!("/{}", "a".repeat(2000))), None);
 	}
 
 	#[test]

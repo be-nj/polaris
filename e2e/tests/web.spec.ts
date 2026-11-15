@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-import { LOCAL_USER, POLARIS_URL, expectSignedIn } from "./support/polaris";
+import { LOCAL_USER, POLARIS_URL, SONG_PAGE, expectSignedIn, expectSongPage } from "./support/polaris";
 
 test("signs in with a password and shows the collection", async ({ page }) => {
 	await page.goto("/");
@@ -15,6 +15,18 @@ test("signs in with a password and shows the collection", async ({ page }) => {
 	// The file browser lists the mount directories of the collection
 	await expect(page.getByText("collection").first()).toBeVisible();
 	await expect(page.getByText("formats").first()).toBeVisible();
+});
+
+test("returns to the page requested before signing in with a password", async ({ page }) => {
+	await page.goto(SONG_PAGE);
+	await page.getByLabel("username").fill(LOCAL_USER.name);
+	await page.getByLabel("password").fill(LOCAL_USER.password);
+	await page.getByTestId("submit-login").click();
+	await expectSongPage(page);
+
+	// The requested page is only returned to once
+	await page.goto("/");
+	await page.waitForURL("**/files");
 });
 
 test("rejects wrong passwords", async ({ page }) => {

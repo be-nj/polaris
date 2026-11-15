@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
-import { POLARIS_URL, authorization, expectSignedIn } from "./support/polaris";
+import { POLARIS_URL, SONG_PAGE, authorization, expectSignedIn, expectSongPage } from "./support/polaris";
 
 interface Provider {
 	/** Name of the provider in the Polaris configuration */
@@ -104,6 +104,34 @@ for (const provider of providers.filter((p) => enabledProviders.includes(p.name)
 
 			await page.getByRole("link", { name: "Back to Polaris" }).click();
 			await page.waitForURL("**/auth");
+		});
+
+		test("returns to the page requested before signing in", async ({ page }) => {
+			// Opening a page of the web client while signed out leads to the login page
+			await page.goto(SONG_PAGE);
+			await page.getByRole("link", { name: `Sign in with ${provider.displayName}` }).click();
+			await provider.signIn(page, "bob", "bob-password");
+			await expectSongPage(page);
+
+			// The requested page is only returned to once
+			await page.goto("/");
+			await page.waitForURL("**/files");
+		});
+
+		test("returns to a location passed in a direct link", async ({ page }) => {
+			await page.goto(`/api/oidc/${provider.name}/start?return_to=${encodeURIComponent(SONG_PAGE)}`);
+			await provider.signIn(page, "bob", "bob-password");
+			await expectSongPage(page);
+		});
+
+		test("does not redirect to other websites", async ({ page }) => {
+			for (const returnTo of ["https://evil.example.com/", "//evil.example.com/", "/\\evil.example.com/"]) {
+				await page.context().clearCookies();
+				await page.goto(`/api/oidc/${provider.name}/start?return_to=${encodeURIComponent(returnTo)}`);
+				await provider.signIn(page, "bob", "bob-password");
+				await expectSignedIn(page);
+				expect(new URL(page.url()).origin).toBe("http://polaris.test:5050");
+			}
 		});
 
 		test("can be started from a direct link", async ({ page }) => {

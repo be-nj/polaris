@@ -429,6 +429,17 @@ pub fn oidc_start(provider: &str) -> Request<()> {
 		.unwrap()
 }
 
+pub fn oidc_start_returning_to(provider: &str, return_to: &str) -> Request<()> {
+	Request::builder()
+		.method(Method::GET)
+		.uri(format!(
+			"/api/oidc/{provider}/start?{}",
+			encode_query(&[("return_to", return_to)])
+		))
+		.body(())
+		.unwrap()
+}
+
 pub fn oidc_callback(provider: &str, params: &[(&str, &str)]) -> Request<()> {
 	Request::builder()
 		.method(Method::GET)
