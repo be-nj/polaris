@@ -150,6 +150,19 @@ admin_roles = ["admins"]
 
 This uses realm roles, which Keycloak lists in its access tokens without further configuration. To use groups instead of roles, Keycloak has to be told to include them, with a _Group Membership_ mapper on the client (`groups` as token claim name, _Full group path_ off); the `role_claim` line can then be removed. This variant is not covered by the tests.
 
+## Mobile apps
+
+Apps can sign users in through the same providers, without any additional configuration at the provider. The Android app in [be-nj/polaris-android](https://github.com/be-nj/polaris-android), a fork of the official app, shows a button for each provider on its login screen; other apps need to implement the steps below. Users signing in this way do not need a Polaris password.
+
+Web pages cannot hand a session over to an app, so signing in works a little differently than for the web client:
+
+1. The app makes up a random secret (the _code verifier_, for example 32 random bytes encoded as base64url) and computes its _code challenge_: the SHA-256 hash of the secret, encoded as base64url without padding.
+2. The app opens `https://your-polaris-server/api/oidc/PROVIDER_NAME/start?code_challenge=CODE_CHALLENGE` in the web browser of the device (on Android, a Custom Tab or Auth Tab). Provider names are listed by `/api/oidc/providers`.
+3. The user signs in. Polaris then shows a page which opens the link `polaris://sso?code=CODE`, which the app must be registered to handle.
+4. The app sends `{"code": "CODE", "code_verifier": "CODE_VERIFIER"}` to `POST /api/oidc/token`, and receives the same response as from `/api/auth`: the name of the user and their authentication token.
+
+Codes are valid for five minutes and can only be used once. A code is worthless without the code verifier, which never leaves the app: another app which gets hold of the link cannot sign in with it. This is the same principle as [PKCE](https://datatracker.ietf.org/doc/html/rfc7636).
+
 ## Security considerations
 
 - **Users are matched by name.** Someone signing in through a provider as `alice` gets access to the existing Polaris user called `alice`, if there is one. Only configure providers you trust to control usernames, and do not let users of the provider pick names that match existing Polaris administrators.

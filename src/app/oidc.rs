@@ -22,6 +22,7 @@ use tokio::task::spawn_blocking;
 use crate::app::{auth, config, Error};
 
 const LOGIN_LIFETIME: Duration = Duration::from_secs(10 * 60);
+const APP_CODE_LIFETIME: Duration = Duration::from_secs(5 * 60);
 const MAX_PENDING_LOGINS: usize = 10_000;
 const DISCOVERY_LIFETIME: Duration = Duration::from_secs(60 * 60);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -47,9 +48,26 @@ struct PendingLogin {
 	provider_name: String,
 	redirect_uri: String,
 	return_to: Option<String>,
+	app_code_challenge: Option<String>,
 	nonce: String,
 	code_verifier: String,
 	started: Instant,
+}
+
+/// A sign-in which was completed in a browser on behalf of an app, and is waiting for the
+/// app to collect its session
+struct AppLogin {
+	code_challenge: String,
+	authorization: Authorization,
+	completed: Instant,
+}
+
+/// The outcome of a sign-in
+#[derive(Clone, Debug)]
+pub struct Authorization {
+	pub username: String,
+	pub token: auth::Token,
+	pub is_admin: bool,
 }
 
 pub struct LoginStart {
@@ -66,12 +84,16 @@ pub struct Login {
 	pub is_admin: bool,
 	/// Location within this server the user asked to be sent to once signed in
 	pub return_to: Option<String>,
+	/// Set when the sign-in was made on behalf of an app. The app exchanges this code for
+	/// its session with [`Manager::redeem_app_code`], and the browser is not signed in.
+	pub app_code: Option<String>,
 }
 
 #[derive(Clone)]
 pub struct Manager {
 	config_manager: config::Manager,
 	pending_logins: Arc<Mutex<HashMap<String, PendingLogin>>>,
+	app_logins: Arc<Mutex<HashMap<String, AppLogin>>>,
 	discovery_cache: Arc<Mutex<HashMap<String, (Instant, Discovery)>>>,
 }
 
@@ -80,6 +102,7 @@ impl Manager {
 		Self {
 			config_manager,
 			pending_logins: Arc::default(),
+			app_logins: Arc::default(),
 			discovery_cache: Arc::default(),
 		}
 	}
@@ -127,6 +150,40 @@ impl Manager {
 		redirect_uri: String,
 		return_to: Option<&str>,
 	) -> Result<LoginStart, Error> {
+		let return_to = return_to.and_then(sanitize_return_to);
+		self.begin(provider_name, redirect_uri, return_to, None)
+			.await
+	}
+
+	/// Starts a sign-in on behalf of an app, which cannot receive its session from the
+	/// browser the way the web client does. Once the user has signed in, the browser hands
+	/// a single-use code over to the app, which exchanges it for its session with
+	/// [`Manager::redeem_app_code`].
+	///
+	/// `code_challenge` is the SHA-256 hash of a secret made up by the app, encoded as
+	/// base64url without padding. The code can only be redeemed by presenting that secret,
+	/// so it is worthless to anything else which gets hold of it (same principle as PKCE).
+	pub async fn begin_app_login(
+		&self,
+		provider_name: &str,
+		redirect_uri: String,
+		code_challenge: &str,
+	) -> Result<LoginStart, Error> {
+		if !is_valid_code_challenge(code_challenge) {
+			return Err(Error::OidcInvalidCodeChallenge);
+		}
+		let code_challenge = Some(code_challenge.to_owned());
+		self.begin(provider_name, redirect_uri, None, code_challenge)
+			.await
+	}
+
+	async fn begin(
+		&self,
+		provider_name: &str,
+		redirect_uri: String,
+		return_to: Option<String>,
+		app_code_challenge: Option<String>,
+	) -> Result<LoginStart, Error> {
 		let provider = self.get_provider(provider_name).await?;
 		let discovery = self.discover(&provider).await?;
 
@@ -171,7 +228,8 @@ impl Manager {
 				PendingLogin {
 					provider_name: provider.name.clone(),
 					redirect_uri,
-					return_to: return_to.and_then(sanitize_return_to),
+					return_to,
+					app_code_challenge,
 					nonce,
 					code_verifier,
 					started: Instant::now(),
@@ -203,6 +261,7 @@ impl Manager {
 		let discovery = self.discover(&provider).await?;
 
 		let return_to = pending_login.return_to.clone();
+		let app_code_challenge = pending_login.app_code_challenge.clone();
 		let claims = spawn_blocking({
 			let provider = provider.clone();
 			let code = code.to_owned();
@@ -249,13 +308,56 @@ impl Manager {
 			provider.name
 		);
 
+		let app_code = app_code_challenge.map(|code_challenge| {
+			let code = random_token();
+			let mut app_logins = self.app_logins.lock().unwrap();
+			app_logins.retain(|_, login| login.completed.elapsed() < APP_CODE_LIFETIME);
+			app_logins.insert(
+				code.clone(),
+				AppLogin {
+					code_challenge,
+					authorization: Authorization {
+						username: username.clone(),
+						token: token.clone(),
+						is_admin,
+					},
+					completed: Instant::now(),
+				},
+			);
+			code
+		});
+
 		Ok(Login {
 			username,
 			token,
 			is_admin,
 			return_to,
+			app_code,
 		})
 	}
+
+	/// Hands over the session of a sign-in made on behalf of an app (see
+	/// [`Manager::begin_app_login`]). `code_verifier` is the secret whose hash was presented
+	/// when starting the sign-in. Each code can only be used once, whether this succeeds
+	/// or not.
+	pub fn redeem_app_code(&self, code: &str, code_verifier: &str) -> Result<Authorization, Error> {
+		let app_login = self.app_logins.lock().unwrap().remove(code);
+		let app_login = app_login
+			.filter(|l| l.completed.elapsed() < APP_CODE_LIFETIME)
+			.ok_or(Error::OidcLoginExpired)?;
+		let code_challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()));
+		if code_challenge != app_login.code_challenge {
+			return Err(Error::OidcLoginExpired);
+		}
+		Ok(app_login.authorization)
+	}
+}
+
+/// Whether this could be a SHA-256 hash encoded as base64url without padding
+fn is_valid_code_challenge(code_challenge: &str) -> bool {
+	URL_SAFE_NO_PAD
+		.decode(code_challenge)
+		.is_ok_and(|hash| hash.len() == 32)
 }
 
 /// Accepts locations a user may be sent to after signing in, which must be within this
@@ -1149,6 +1251,145 @@ mod test {
 			Some("/#/albums")
 		);
 		assert_eq!(login_with(Some("https://evil.example.com/")).await, None);
+	}
+
+	fn make_code_challenge(code_verifier: &str) -> String {
+		URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()))
+	}
+
+	impl Context {
+		/// Signs in on behalf of an app, up to the point where the app receives its code.
+		async fn app_login(&self, code_verifier: &str) -> String {
+			let code_challenge = make_code_challenge(code_verifier);
+			let start = self
+				.manager
+				.begin_app_login("test", REDIRECT_URI.to_owned(), &code_challenge)
+				.await
+				.unwrap();
+			// The challenge is between the app and this server, the provider has its own
+			assert!(!start.authorization_url.contains(&code_challenge));
+			let code = self.provider.authorize(&start.authorization_url);
+			let login = self
+				.manager
+				.complete_login("test", &start.state, &code)
+				.await
+				.unwrap();
+			login.app_code.unwrap()
+		}
+	}
+
+	#[tokio::test]
+	async fn signs_in_apps() {
+		let ctx = Context::new(test_name!(), |_| ()).await;
+		ctx.provider.set_user("alice", &[]);
+
+		// Sign-ins made by the web client do not produce codes
+		assert!(ctx.login().await.unwrap().app_code.is_none());
+
+		let code = ctx.app_login("app-secret").await;
+		let authorization = ctx.manager.redeem_app_code(&code, "app-secret").unwrap();
+		assert_eq!(authorization.username, "alice");
+		assert!(!authorization.is_admin);
+		let auth = ctx
+			.config_manager
+			.authenticate(&authorization.token, auth::Scope::PolarisAuth)
+			.await
+			.unwrap();
+		assert_eq!(auth.username, "alice");
+	}
+
+	#[tokio::test]
+	async fn app_codes_require_the_code_verifier() {
+		let ctx = Context::new(test_name!(), |_| ()).await;
+		ctx.provider.set_user("alice", &[]);
+
+		let code = ctx.app_login("app-secret").await;
+		let result = ctx.manager.redeem_app_code(&code, "other-secret");
+		assert!(matches!(result, Err(Error::OidcLoginExpired)));
+		// A failed attempt uses up the code
+		let result = ctx.manager.redeem_app_code(&code, "app-secret");
+		assert!(matches!(result, Err(Error::OidcLoginExpired)));
+
+		// Presenting the challenge instead of the secret it was derived from is not enough
+		let code = ctx.app_login("app-secret").await;
+		let result = ctx
+			.manager
+			.redeem_app_code(&code, &make_code_challenge("app-secret"));
+		assert!(matches!(result, Err(Error::OidcLoginExpired)));
+	}
+
+	#[tokio::test]
+	async fn app_codes_can_only_be_used_once() {
+		let ctx = Context::new(test_name!(), |_| ()).await;
+		ctx.provider.set_user("alice", &[]);
+
+		let code = ctx.app_login("app-secret").await;
+		assert!(ctx.manager.redeem_app_code(&code, "app-secret").is_ok());
+		let result = ctx.manager.redeem_app_code(&code, "app-secret");
+		assert!(matches!(result, Err(Error::OidcLoginExpired)));
+
+		let result = ctx.manager.redeem_app_code("made-up-code", "app-secret");
+		assert!(matches!(result, Err(Error::OidcLoginExpired)));
+	}
+
+	#[tokio::test]
+	async fn app_codes_expire() {
+		let ctx = Context::new(test_name!(), |_| ()).await;
+		ctx.provider.set_user("alice", &[]);
+
+		let code = ctx.app_login("app-secret").await;
+		{
+			let mut app_logins = ctx.manager.app_logins.lock().unwrap();
+			let app_login = app_logins.get_mut(&code).unwrap();
+			let Some(completed) = Instant::now().checked_sub(APP_CODE_LIFETIME) else {
+				// The clock of this machine started too recently to simulate this
+				return;
+			};
+			app_login.completed = completed;
+		}
+		let result = ctx.manager.redeem_app_code(&code, "app-secret");
+		assert!(matches!(result, Err(Error::OidcLoginExpired)));
+	}
+
+	#[tokio::test]
+	async fn rejects_malformed_code_challenges() {
+		let ctx = Context::new(test_name!(), |_| ()).await;
+		for code_challenge in ["", "too-short", "not base64url!", &"A".repeat(44)] {
+			let result = ctx
+				.manager
+				.begin_app_login("test", REDIRECT_URI.to_owned(), code_challenge)
+				.await;
+			assert!(
+				matches!(result, Err(Error::OidcInvalidCodeChallenge)),
+				"{code_challenge:?}"
+			);
+		}
+	}
+
+	#[tokio::test]
+	async fn apps_are_subject_to_access_rules() {
+		let ctx = Context::new(test_name!(), |p| {
+			p.allowed_roles = vec!["music".to_owned()];
+		})
+		.await;
+		ctx.provider.set_user("mallory", &["other"]);
+
+		let start = ctx
+			.manager
+			.begin_app_login(
+				"test",
+				REDIRECT_URI.to_owned(),
+				&make_code_challenge("app-secret"),
+			)
+			.await
+			.unwrap();
+		let code = ctx.provider.authorize(&start.authorization_url);
+		let result = ctx
+			.manager
+			.complete_login("test", &start.state, &code)
+			.await;
+		assert!(matches!(result, Err(Error::OidcAccessDenied(_))));
+		assert!(ctx.manager.app_logins.lock().unwrap().is_empty());
 	}
 
 	#[test]

@@ -106,6 +106,8 @@ pub enum Error {
 	OidcInvalidResponse(String),
 	#[error("This sign-in attempt has expired or was already completed")]
 	OidcLoginExpired,
+	#[error("The code challenge is not a base64url-encoded SHA-256 hash")]
+	OidcInvalidCodeChallenge,
 	#[error("User `{0}` is not allowed to sign in")]
 	OidcAccessDenied(String),
 

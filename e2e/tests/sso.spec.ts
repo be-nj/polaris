@@ -1,6 +1,15 @@
+import { createHash, randomBytes } from "node:crypto";
+
 import { test, expect, type Page } from "@playwright/test";
 
-import { POLARIS_URL, SONG_PAGE, authorization, expectSignedIn, expectSongPage } from "./support/polaris";
+import {
+	POLARIS_URL,
+	SONG_PAGE,
+	authorization,
+	expectSignedIn,
+	expectSongPage,
+	readSession,
+} from "./support/polaris";
 
 interface Provider {
 	/** Name of the provider in the Polaris configuration */
@@ -46,6 +55,13 @@ const providers: Provider[] = [
 		},
 	},
 ];
+
+/** What an app does before sending the user to the browser: makes up a secret, and derives a challenge from it. */
+function makeCodeVerifier() {
+	const codeVerifier = randomBytes(32).toString("base64url");
+	const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+	return { codeVerifier, codeChallenge };
+}
 
 const enabledProviders = (process.env.E2E_PROVIDERS ?? providers.map((p) => p.name).join(",")).split(",");
 
@@ -132,6 +148,70 @@ for (const provider of providers.filter((p) => enabledProviders.includes(p.name)
 				await expectSignedIn(page);
 				expect(new URL(page.url()).origin).toBe("http://polaris.test:5050");
 			}
+		});
+
+		/** Signs in the way apps do, up to the link which hands the sign-in over to the app. Returns the code it carries. */
+		async function signInForApp(page: Page, codeChallenge: string): Promise<string> {
+			await page.goto(`/api/oidc/${provider.name}/start?code_challenge=${codeChallenge}`);
+			await provider.signIn(page, "bob", "bob-password");
+
+			await expect(page.getByRole("heading", { name: "Signed in as bob" })).toBeVisible();
+			const href = await page.getByRole("link", { name: "Open Polaris" }).getAttribute("href");
+			const link = new URL(href!);
+			expect(link.protocol).toBe("polaris:");
+			expect(link.host).toBe("sso");
+			expect([...link.searchParams.keys()]).toEqual(["code"]);
+
+			// The session is meant for the app, the browser itself is not signed in
+			expect(await readSession(page)).toBeNull();
+
+			return link.searchParams.get("code")!;
+		}
+
+		test("signs in apps", async ({ page, request }) => {
+			const { codeVerifier, codeChallenge } = makeCodeVerifier();
+			const code = await signInForApp(page, codeChallenge);
+
+			const exchange = { data: { code, code_verifier: codeVerifier } };
+			const response = await request.post(`${POLARIS_URL}/api/oidc/token`, exchange);
+			expect(response.status()).toBe(200);
+			const session = await response.json();
+			expect(session.username).toBe("bob");
+			expect(session.is_admin).toBe(false);
+
+			const albums = await request.get(`${POLARIS_URL}/api/albums`, { headers: authorization(session.token) });
+			expect(albums.status()).toBe(200);
+			expect((await albums.json()).length).toBeGreaterThan(0);
+
+			// Codes can only be used once
+			const replay = await request.post(`${POLARIS_URL}/api/oidc/token`, exchange);
+			expect(replay.status()).toBe(400);
+		});
+
+		test("does not sign in apps which did not start the sign-in", async ({ page, request }) => {
+			const { codeVerifier, codeChallenge } = makeCodeVerifier();
+			const code = await signInForApp(page, codeChallenge);
+
+			// Something which got hold of the code, but does not know the secret of the app
+			for (const guess of [makeCodeVerifier().codeVerifier, codeChallenge, ""]) {
+				const exchange = { data: { code, code_verifier: guess } };
+				const response = await request.post(`${POLARIS_URL}/api/oidc/token`, exchange);
+				expect(response.status()).toBe(400);
+			}
+
+			// The failed attempts used up the code
+			const exchange = { data: { code, code_verifier: codeVerifier } };
+			const response = await request.post(`${POLARIS_URL}/api/oidc/token`, exchange);
+			expect(response.status()).toBe(400);
+		});
+
+		test("does not sign in apps of users without an allowed role", async ({ page }) => {
+			const { codeChallenge } = makeCodeVerifier();
+			await page.goto(`/api/oidc/${provider.name}/start?code_challenge=${codeChallenge}`);
+			await provider.signIn(page, "mallory", "mallory-password");
+
+			await expect(page.getByRole("heading", { name: "Could not sign in" })).toBeVisible();
+			await expect(page.getByRole("link", { name: "Open Polaris" })).toHaveCount(0);
 		});
 
 		test("can be started from a direct link", async ({ page }) => {

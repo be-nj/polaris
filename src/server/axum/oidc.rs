@@ -3,6 +3,12 @@
 //! A sign-in is a round trip made by the browser of the user: `start` sends it to the
 //! identity provider, which sends it back to `callback`. The callback responds with a page
 //! which hands the resulting session over to the web client.
+//!
+//! Apps cannot be handed a session by a web page. When a sign-in is started with a
+//! `code_challenge`, the callback page opens a `polaris://sso?code=…` link instead, which
+//! the app is registered to handle. The app then exchanges the code for its session with
+//! the `token` endpoint, proving it started the sign-in by presenting the secret behind the
+//! challenge.
 
 use axum::{
 	extract::{Path, Query, State},
@@ -22,12 +28,15 @@ use crate::{
 
 const STATE_COOKIE: &str = "polaris_oidc_state";
 const STATE_COOKIE_LIFETIME_SECONDS: u32 = 600;
+/// Link apps register to handle, which ends single sign-ons made on their behalf
+const APP_LINK: &str = "polaris://sso";
 
 pub fn router() -> OpenApiRouter<App> {
 	OpenApiRouter::new()
 		.routes(routes!(get_providers))
 		.routes(routes!(get_start))
 		.routes(routes!(get_callback))
+		.routes(routes!(post_token))
 }
 
 fn login_path(provider_name: &str) -> String {
@@ -102,19 +111,22 @@ async fn get_providers(State(app): State<App>) -> Json<Vec<dto::OidcProvider>> {
 #[derive(Deserialize)]
 struct StartParameters {
 	return_to: Option<String>,
+	code_challenge: Option<String>,
 }
 
 #[utoipa::path(
 	get,
 	path = "/oidc/{provider}/start",
 	tag = "User Management",
-	description = "Starts signing in with a single sign-on provider.\n\nThis endpoint is meant to be navigated to by a web browser. It redirects to the sign-in page of the provider, which eventually redirects to the `callback` endpoint.",
+	description = "Starts signing in with a single sign-on provider.\n\nThis endpoint is meant to be navigated to by a web browser. It redirects to the sign-in page of the provider, which eventually redirects to the `callback` endpoint.\n\nApps sign in by opening this location in the web browser of the device with a `code_challenge`. Once the user has signed in, the browser opens the link `polaris://sso?code=CODE`, which the app must be registered to handle. The app obtains its session by sending this code to the `token` endpoint.",
 	params(
 		("provider", example = "authelia"),
 		("return_to" = Option<String>, Query, description = "Where to send the user once signed in, instead of the start page of the web client. Must be a path within this server (starting with a single `/`, for example `/#/albums`); anything else is ignored."),
+		("code_challenge" = Option<String>, Query, description = "For apps. SHA-256 hash of a random secret made up by the app (the code verifier), encoded as base64url without padding."),
 	),
 	responses(
 		(status = 303, description = "Redirection to the sign-in page of the provider"),
+		(status = 400, description = "Invalid code challenge"),
 		(status = 404, description = "Unknown provider"),
 		(status = 502, description = "The provider could not be reached"),
 	),
@@ -127,12 +139,20 @@ async fn get_start(
 ) -> Result<Response, APIError> {
 	let public_url = get_public_url(&app, &headers).await;
 	let redirect_uri = format!("{public_url}/api/oidc/{provider}/callback");
-	let return_to = parameters.return_to.as_deref();
 
-	let start = app
-		.oidc_manager
-		.begin_login(&provider, redirect_uri, return_to)
-		.await;
+	let start = match &parameters.code_challenge {
+		Some(code_challenge) => {
+			app.oidc_manager
+				.begin_app_login(&provider, redirect_uri, code_challenge)
+				.await
+		}
+		None => {
+			let return_to = parameters.return_to.as_deref();
+			app.oidc_manager
+				.begin_login(&provider, redirect_uri, return_to)
+				.await
+		}
+	};
 	let start = match start {
 		Ok(start) => start,
 		Err(e) => {
@@ -174,7 +194,7 @@ struct CallbackParameters {
 	get,
 	path = "/oidc/{provider}/callback",
 	tag = "User Management",
-	description = "Completes signing in with a single sign-on provider.\n\nThis is where providers send users back to after they have signed in, and must be registered with the provider as the redirect URI (`https://your-polaris-server/api/oidc/PROVIDER/callback`). The response is a web page which opens the Polaris web client, signed in.",
+	description = "Completes signing in with a single sign-on provider.\n\nThis is where providers send users back to after they have signed in, and must be registered with the provider as the redirect URI (`https://your-polaris-server/api/oidc/PROVIDER/callback`). The response is a web page which opens the Polaris web client, signed in. When the sign-in was started by an app, the page opens the app instead.",
 	params(
 		("provider", example = "authelia"),
 		("code" = Option<String>, Query, description = "Authorization code issued by the provider"),
@@ -268,7 +288,8 @@ fn page(title: &str, body: &str) -> Html<String> {
 <title>{title}</title>
 <style>
 body {{ font-family: system-ui, sans-serif; max-width: 32rem; margin: 20vh auto 0; padding: 0 1rem; text-align: center; color: #222; background: #fafafa; }}
-@media (prefers-color-scheme: dark) {{ body {{ color: #eee; background: #18181b; }} a {{ color: #8ab4f8; }} }}
+a.button {{ display: inline-block; padding: 0.75rem 1.5rem; border-radius: 0.5rem; background: #2563eb; color: #fff; text-decoration: none; font-weight: 600; }}
+@media (prefers-color-scheme: dark) {{ body {{ color: #eee; background: #18181b; }} a {{ color: #8ab4f8; }} a.button {{ color: #fff; }} }}
 </style>
 </head>
 <body>
@@ -279,10 +300,64 @@ body {{ font-family: system-ui, sans-serif; max-width: 32rem; margin: 20vh auto 
 	))
 }
 
+#[utoipa::path(
+	post,
+	path = "/oidc/token",
+	tag = "User Management",
+	description = "Completes a single sign-on made on behalf of an app, by exchanging the code the app received for its session. Codes can only be used once and expire after a few minutes.",
+	request_body = dto::OidcCodeExchange,
+	responses(
+		(status = 200, body = dto::Authorization),
+		(status = 400, description = "The code is invalid, expired or was already used, or the code verifier does not match"),
+	),
+)]
+async fn post_token(
+	State(app): State<App>,
+	Json(exchange): Json<dto::OidcCodeExchange>,
+) -> Result<Response, APIError> {
+	let authorization = app
+		.oidc_manager
+		.redeem_app_code(&exchange.code, &exchange.code_verifier)?;
+	let authorization = dto::Authorization {
+		username: authorization.username,
+		token: authorization.token.0,
+		is_admin: authorization.is_admin,
+	};
+	Ok((
+		[(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+		Json(authorization),
+	)
+		.into_response())
+}
+
 /// Page which stores the session where the Polaris web client expects to find it, then
-/// opens the web client.
+/// opens the web client. For sign-ins made on behalf of an app, the page opens the app.
 fn login_page(login: &oidc::Login) -> Response {
-	login_page_html(login).into_response()
+	match &login.app_code {
+		Some(code) => app_login_page_html(&login.username, code).into_response(),
+		None => login_page_html(login).into_response(),
+	}
+}
+
+/// Page which hands a sign-in over to the app which started it.
+///
+/// Browsers may refuse to open apps without the user asking for it, which is why this is
+/// a page with a button rather than a redirection.
+fn app_login_page_html(username: &str, code: &str) -> Html<String> {
+	let query = form_urlencoded::Serializer::new(String::new())
+		.append_pair("code", code)
+		.finish();
+	let link = escape_html(&format!("{APP_LINK}?{query}"));
+	let username = escape_html(username);
+	let body = format!(
+		r#"<h1>Signed in as {username}</h1>
+<p>Return to the Polaris app to continue.</p>
+<p><a id="open-app" class="button" href="{link}">Open Polaris</a></p>
+<script>
+window.location.replace(document.getElementById("open-app").href);
+</script>"#
+	);
+	page("Polaris", &body)
 }
 
 fn login_page_html(login: &oidc::Login) -> Html<String> {
@@ -349,6 +424,7 @@ mod test {
 			token: app::auth::Token("token".to_owned()),
 			is_admin: false,
 			return_to: Some("/#/songs/</script><script>alert(2)</script>".to_owned()),
+			app_code: None,
 		};
 		let Html(html) = login_page_html(&login);
 		assert_eq!(html.matches("<script>").count(), 1);
@@ -357,5 +433,15 @@ mod test {
 		assert!(html.contains(
 			r#"window.location.replace("/#/songs/\u003c/script\u003e\u003cscript\u003ealert(2)"#
 		));
+	}
+
+	#[test]
+	fn app_login_page_cannot_be_broken_out_of() {
+		let Html(html) =
+			app_login_page_html("<script>alert(1)</script>", "\"><script>alert(2)</script>");
+		assert_eq!(html.matches("<script>").count(), 1);
+		assert_eq!(html.matches("</script>").count(), 1);
+		assert!(html.contains("Signed in as &lt;script&gt;alert(1)&lt;/script&gt;"));
+		assert!(html.contains(r#"href="polaris://sso?code=%22%3E%3Cscript%3E"#));
 	}
 }

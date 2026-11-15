@@ -87,6 +87,8 @@ pub enum APIError {
 	OidcProviderFailure,
 	#[error("This sign-in attempt has expired or was already completed")]
 	OidcLoginExpired,
+	#[error("The code challenge is not a base64url-encoded SHA-256 hash")]
+	OidcInvalidCodeChallenge,
 	#[error("Your account is not allowed to use this server")]
 	OidcAccessDenied,
 	#[error("Audio transcoding is not available on this server")]
@@ -138,6 +140,7 @@ impl From<app::Error> for APIError {
 			app::Error::OidcProviderUnreachable(_) => APIError::OidcProviderFailure,
 			app::Error::OidcInvalidResponse(_) => APIError::OidcProviderFailure,
 			app::Error::OidcLoginExpired => APIError::OidcLoginExpired,
+			app::Error::OidcInvalidCodeChallenge => APIError::OidcInvalidCodeChallenge,
 			app::Error::OidcAccessDenied(_) => APIError::OidcAccessDenied,
 			app::Error::TranscodingUnavailable => APIError::TranscodingUnavailable,
 			app::Error::Transcoding(p) => APIError::TranscodingFailed(p),

@@ -5,6 +5,7 @@
 ### Server
 
 - Added single sign-on through OpenID Connect providers such as Authelia, authentik or Keycloak, with optional role-based access and administrator mapping. See the [documentation](docs/SSO.md).
+- Apps can sign users in through single sign-on providers: a sign-in started with a `code_challenge` ends by opening a `polaris://sso` link with a single-use code, which the app exchanges for its session with the new `/oidc/token` endpoint. See the [documentation](docs/SSO.md#mobile-apps).
 - Single sign-on can return to a specific page afterwards: the sign-in link accepts a `return_to` location within the Polaris server. The web client in the Docker image uses this (and does the same for password sign-ins), so that opening a link to a song or album while signed out leads to that page after signing in.
 - Added on-demand audio transcoding to `mp3`, `opus` or `aac`, using FFmpeg when it is installed. The `/audio` endpoint accepts new `format` and `bitrate` parameters, and the new `/transcoding` endpoint reports whether transcoding is available. See the [documentation](docs/TRANSCODING.md).
 - Added support for the Subsonic API (with OpenSubsonic extensions) under `/rest`, allowing third-party Subsonic clients (including web-based ones, thanks to CORS support on these endpoints) to connect to Polaris. See the [documentation](docs/SUBSONIC.md) for setup instructions and limitations.

@@ -52,6 +52,7 @@ impl IntoResponse for APIError {
 			APIError::OidcProviderNotFound => StatusCode::NOT_FOUND,
 			APIError::OidcProviderFailure => StatusCode::BAD_GATEWAY,
 			APIError::OidcLoginExpired => StatusCode::BAD_REQUEST,
+			APIError::OidcInvalidCodeChallenge => StatusCode::BAD_REQUEST,
 			APIError::OidcAccessDenied => StatusCode::FORBIDDEN,
 			APIError::TranscodingUnavailable => StatusCode::NOT_IMPLEMENTED,
 			APIError::TranscodingFailed(_) => StatusCode::INTERNAL_SERVER_ERROR,

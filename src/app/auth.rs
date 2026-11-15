@@ -22,7 +22,7 @@ impl AsMut<[u8]> for Secret {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Token(pub String);
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]

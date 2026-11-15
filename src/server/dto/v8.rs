@@ -51,6 +51,15 @@ pub struct OidcProvider {
 	pub login_url: String,
 }
 
+/// Exchanges the code an app received at the end of a single sign-on for its session
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct OidcCodeExchange {
+	/// Code the app received through its `polaris://sso` link
+	pub code: String,
+	/// The secret whose hash the app passed as `code_challenge` when starting to sign in
+	pub code_verifier: String,
+}
+
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuthQueryParameters {
 	#[schema(

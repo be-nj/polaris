@@ -18,7 +18,7 @@ This is a fork of [agersant/polaris](https://github.com/agersant/polaris), which
 | --- | --- | --- |
 | 📻 **Subsonic API** | Use third-party Subsonic / OpenSubsonic clients (mobile apps, desktop players, web players) with your Polaris server. | [Using Subsonic clients](docs/SUBSONIC.md) |
 | 🎚️ **Transcoding** | Songs can be converted to `mp3`, `opus` or `aac` at a lower bitrate while streaming, to save mobile data or to play formats a device does not support. Playback starts immediately, and converted songs are cached. | [Transcoding](docs/TRANSCODING.md) |
-| 🔑 **Single sign-on** | Sign in through an OpenID Connect provider such as Authelia, authentik or Keycloak. Users are created on first sign-in; access and administrator rights can be driven by groups. | [Single sign-on](docs/SSO.md) |
+| 🔑 **Single sign-on** | Sign in through an OpenID Connect provider such as Authelia, authentik or Keycloak. Users are created on first sign-in; access and administrator rights can be driven by groups. Mobile apps can sign in this way too. | [Single sign-on](docs/SSO.md) |
 | 🚫 **Scan exclusions** | Keep folders and files out of your collection with a pattern, for example Synology `@eaDir` folders. Hidden files and folders (like `.zfs` snapshots) are skipped by default. | [Configuration](docs/CONFIGURATION.md) |
 | 🐳 **Docker image** | An image with the server, the web client and FFmpeg, plus a ready-to-use `docker-compose.yml`. The login page of its web client offers a button for each single sign-on provider. | [Running Polaris with Docker](docs/DOCKER.md) |
 

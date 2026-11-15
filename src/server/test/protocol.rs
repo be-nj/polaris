@@ -440,6 +440,29 @@ pub fn oidc_start_returning_to(provider: &str, return_to: &str) -> Request<()> {
 		.unwrap()
 }
 
+pub fn oidc_start_for_app(provider: &str, code_challenge: &str) -> Request<()> {
+	Request::builder()
+		.method(Method::GET)
+		.uri(format!(
+			"/api/oidc/{provider}/start?{}",
+			encode_query(&[("code_challenge", code_challenge)])
+		))
+		.body(())
+		.unwrap()
+}
+
+pub fn oidc_token(code: &str, code_verifier: &str) -> Request<dto::OidcCodeExchange> {
+	let exchange = dto::OidcCodeExchange {
+		code: code.into(),
+		code_verifier: code_verifier.into(),
+	};
+	Request::builder()
+		.method(Method::POST)
+		.uri("/api/oidc/token")
+		.body(exchange)
+		.unwrap()
+}
+
 pub fn oidc_callback(provider: &str, params: &[(&str, &str)]) -> Request<()> {
 	Request::builder()
 		.method(Method::GET)

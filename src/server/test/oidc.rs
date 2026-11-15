@@ -337,3 +337,135 @@ async fn login_does_not_redirect_to_other_sites() {
 		assert_eq!(read_destination(response.body()), "/", "{return_to:?}");
 	}
 }
+
+fn make_code_challenge(code_verifier: &str) -> String {
+	use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+	use sha2::{Digest, Sha256};
+	URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()))
+}
+
+/// Reads the link which opens the app, from the page ending a sign-in made on its behalf.
+fn read_app_link(page: &[u8]) -> String {
+	let page = std::str::from_utf8(page).unwrap();
+	let (_, link) = page
+		.split_once(r#"id="open-app" class="button" href=""#)
+		.unwrap();
+	let (link, _) = link.split_once('"').unwrap();
+	link.replace("&amp;", "&")
+}
+
+/// Signs in on behalf of an app, up to the point where the app receives its code.
+async fn app_login(
+	service: &mut ServiceType,
+	provider: &mock::Provider,
+	code_verifier: &str,
+) -> String {
+	let code_challenge = make_code_challenge(code_verifier);
+	let request = protocol::oidc_start_for_app(PROVIDER, &code_challenge);
+	let attempt = start_login(service, request).await;
+	let code = provider.authorize(&attempt.authorization_url);
+	let response = service.fetch_bytes(&callback(&attempt, &code)).await;
+	assert_eq!(response.status(), StatusCode::OK);
+
+	// The browser is sent to the app, and is not signed in to the web client itself
+	let page = std::str::from_utf8(response.body()).unwrap();
+	assert!(!page.contains("localStorage"));
+	assert!(!page.contains("current_user"));
+
+	let link = read_app_link(response.body());
+	let (target, query) = link.split_once('?').unwrap();
+	assert_eq!(target, "polaris://sso");
+	let parameters = form_urlencoded::parse(query.as_bytes())
+		.into_owned()
+		.collect::<HashMap<_, _>>();
+	assert_eq!(parameters.len(), 1);
+	parameters["code"].clone()
+}
+
+#[tokio::test]
+async fn app_login_golden_path() {
+	let (mut service, provider) = make_service(&test_name!(), "").await;
+	provider.set_user("alice", &["music", "admins"]);
+
+	let code = app_login(&mut service, &provider, "app-secret").await;
+
+	let request = protocol::oidc_token(&code, "app-secret");
+	let response = service.fetch_json::<_, dto::Authorization>(&request).await;
+	assert_eq!(response.status(), StatusCode::OK);
+	assert_eq!(
+		response.headers().get(header::CACHE_CONTROL).unwrap(),
+		"no-store"
+	);
+	let authorization = response.body();
+	assert_eq!(authorization.username, "alice");
+	assert!(authorization.is_admin);
+
+	// The session works with the rest of the API
+	let authorization = authorization.clone();
+	service.set_authorization(Some(authorization));
+	let response = service.fetch(&protocol::transcoding()).await;
+	assert_eq!(response.status(), StatusCode::OK);
+	let response = service.fetch(&protocol::get_settings()).await;
+	assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn app_login_requires_code_verifier() {
+	let (mut service, provider) = make_service(&test_name!(), "").await;
+
+	let code = app_login(&mut service, &provider, "app-secret").await;
+	let request = protocol::oidc_token(&code, "other-secret");
+	let response = service.fetch(&request).await;
+	assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+	// The failed attempt used up the code
+	let request = protocol::oidc_token(&code, "app-secret");
+	let response = service.fetch(&request).await;
+	assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn app_login_codes_cannot_be_replayed() {
+	let (mut service, provider) = make_service(&test_name!(), "").await;
+
+	let code = app_login(&mut service, &provider, "app-secret").await;
+	let request = protocol::oidc_token(&code, "app-secret");
+	assert_eq!(service.fetch(&request).await.status(), StatusCode::OK);
+	assert_eq!(
+		service.fetch(&request).await.status(),
+		StatusCode::BAD_REQUEST
+	);
+
+	let request = protocol::oidc_token("made-up-code", "app-secret");
+	assert_eq!(
+		service.fetch(&request).await.status(),
+		StatusCode::BAD_REQUEST
+	);
+}
+
+#[tokio::test]
+async fn app_login_rejects_malformed_code_challenges() {
+	let (mut service, _provider) = make_service(&test_name!(), "").await;
+	for code_challenge in ["", "nope", "https://evil.example.com/"] {
+		let request = protocol::oidc_start_for_app(PROVIDER, code_challenge);
+		let response = service.fetch(&request).await;
+		assert_eq!(
+			response.status(),
+			StatusCode::BAD_REQUEST,
+			"{code_challenge:?}"
+		);
+	}
+}
+
+#[tokio::test]
+async fn app_login_enforces_allowed_roles() {
+	let (mut service, provider) = make_service(&test_name!(), "").await;
+	provider.set_user("mallory", &["other"]);
+
+	let code_challenge = make_code_challenge("app-secret");
+	let request = protocol::oidc_start_for_app(PROVIDER, &code_challenge);
+	let attempt = start_login(&mut service, request).await;
+	let code = provider.authorize(&attempt.authorization_url);
+	let response = service.fetch(&callback(&attempt, &code)).await;
+	assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
