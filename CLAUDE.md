@@ -65,6 +65,8 @@ An index is never mutated in place. `index::Builder` accumulates `scanner::Direc
 
 The scan also decides the artwork of each song (`process_directory`): a picture embedded in the file, else an image of the same directory matching `album_art_pattern` (default in `config::DEFAULT_ALBUM_ART_PATTERN`), else that of the parent directory for disc directories (`DISC_DIRECTORY_REGEX`, eg. `CD1`). `thumbnail.rs` extracts embedded pictures per format; user docs are in `docs/CONFIGURATION.md`.
 
+Pictures of artists work differently, since artists come from tags rather than from directories. Each song carries the image matching `artist_art_pattern` found next to the directory of its album (`Song::artist_artwork`), and `collection::Builder::assign_artist_artwork` gives such an image to an artist when most of the songs it was found next to are theirs. Index files start with `INDEX_FILE_HEADER`, which must change along with any serialized index type.
+
 Paths exposed through the API are *virtual paths*: the first component is a mount name, mapped to a real directory by `config::Manager::resolve_virtual_path` / `virtualize_path`. The index only stores virtual paths.
 
 ### HTTP server
@@ -98,7 +100,7 @@ Fixtures are in `test-data/` (`small-collection` is the standard mount; other di
 
 ## Docker image
 
-`Dockerfile` builds the image published to `ghcr.io/be-nj/polaris` by `.github/workflows/docker.yml` (user docs in `docs/DOCKER.md`, example `docker-compose.yml` at the repository root). It has three stages: the web client (a pinned polaris-web tag plus `docker/polaris-web-sso.patch`, which adds single sign-on buttons to the login page and makes the web client return to the page that was requested before signing in), the server (cross-compiled when the target architecture differs from the build machine) and a Debian runtime with FFmpeg. `docker/entrypoint.sh` prepares `/config`, `/data` and `/cache` and drops root privileges to `PUID`/`PGID`. `.dockerignore` is an allowlist: new files needed by the build must be added to it.
+`Dockerfile` builds the image published to `ghcr.io/be-nj/polaris` by `.github/workflows/docker.yml` (user docs in `docs/DOCKER.md`, example `docker-compose.yml` at the repository root). It has three stages: the web client (a pinned polaris-web tag plus `docker/polaris-web.patch`, which adds single sign-on buttons to the login page, makes the web client return to the page that was requested before signing in, and shows pictures of artists), the server (cross-compiled when the target architecture differs from the build machine) and a Debian runtime with FFmpeg. `docker/entrypoint.sh` prepares `/config`, `/data` and `/cache` and drops root privileges to `PUID`/`PGID`. `.dockerignore` is an allowlist: new files needed by the build must be added to it.
 
 ## Releases and changelog
 

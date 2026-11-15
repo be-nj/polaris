@@ -495,6 +495,10 @@ impl From<index::Genre> for Genre {
 pub struct ArtistHeader {
 	#[schema(examples("Stratovarius", "Parov Stelar"))]
 	pub name: String,
+	/// Picture of the artist, to be requested through the `/thumbnail` endpoint
+	#[schema(value_type = Option<String>, examples("my_music/Stratovarius/artist.jpg"))]
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub artwork: Option<PathBuf>,
 	#[schema(examples(0, 5))]
 	pub num_albums_as_performer: u32,
 	#[schema(examples(0, 5))]
@@ -513,6 +517,7 @@ impl From<index::ArtistHeader> for ArtistHeader {
 	fn from(a: index::ArtistHeader) -> Self {
 		Self {
 			name: a.name.to_string(),
+			artwork: a.artwork,
 			num_albums_as_performer: a.num_albums_as_performer,
 			num_albums_as_additional_performer: a.num_albums_as_additional_performer,
 			num_albums_as_composer: a.num_albums_as_composer,

@@ -33,9 +33,14 @@ pub const DEFAULT_SCAN_EXCLUDE_PATTERN: &str = r"^\.";
 /// Matching is case insensitive.
 pub const DEFAULT_ALBUM_ART_PATTERN: &str = r"^(folder|cover|front|album)\.(jpeg|jpg|png)$";
 
+/// File names pictures of artists are read from when the configuration does not specify
+/// any, in the directory holding the albums of an artist. Matching is case insensitive.
+pub const DEFAULT_ARTIST_ART_PATTERN: &str = r"^(artist|folder)\.(jpeg|jpg|png)$";
+
 #[derive(Debug, Clone, Default)]
 pub struct Config {
 	pub album_art_pattern: Option<Regex>,
+	pub artist_art_pattern: Option<Regex>,
 	pub scan_exclude_pattern: Option<Regex>,
 	pub transcode_cache_size_mb: Option<u64>,
 	pub ddns_update_url: Option<http::Uri>,
@@ -54,6 +59,12 @@ impl TryFrom<storage::Config> for Config {
 		config.set_users(c.users)?;
 
 		config.album_art_pattern = match c.album_art_pattern.as_deref().map(Regex::new) {
+			Some(Ok(u)) => Some(u),
+			Some(Err(_)) => return Err(Error::IndexAlbumArtPatternInvalid),
+			None => None,
+		};
+
+		config.artist_art_pattern = match c.artist_art_pattern.as_deref().map(Regex::new) {
 			Some(Ok(u)) => Some(u),
 			Some(Err(_)) => return Err(Error::IndexAlbumArtPatternInvalid),
 			None => None,
@@ -100,6 +111,7 @@ impl From<Config> for storage::Config {
 	fn from(c: Config) -> Self {
 		Self {
 			album_art_pattern: c.album_art_pattern.map(|p| p.as_str().to_owned()),
+			artist_art_pattern: c.artist_art_pattern.map(|p| p.as_str().to_owned()),
 			scan_exclude_pattern: c.scan_exclude_pattern.map(|p| p.as_str().to_owned()),
 			transcode_cache_size_mb: c.transcode_cache_size_mb,
 			mount_dirs: c.mount_dirs.into_iter().map(|d| d.into()).collect(),
@@ -243,6 +255,12 @@ impl Manager {
 		let config = self.config.read().await;
 		let pattern = config.album_art_pattern.clone();
 		pattern.unwrap_or_else(|| Regex::new(DEFAULT_ALBUM_ART_PATTERN).unwrap())
+	}
+
+	pub async fn get_index_artist_art_pattern(&self) -> Regex {
+		let config = self.config.read().await;
+		let pattern = config.artist_art_pattern.clone();
+		pattern.unwrap_or_else(|| Regex::new(DEFAULT_ARTIST_ART_PATTERN).unwrap())
 	}
 
 	pub async fn set_index_album_art_pattern(&self, regex: Regex) -> Result<(), Error> {

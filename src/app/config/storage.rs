@@ -24,6 +24,8 @@ pub struct Config {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub album_art_pattern: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	pub artist_art_pattern: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
 	pub scan_exclude_pattern: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub transcode_cache_size_mb: Option<u64>,

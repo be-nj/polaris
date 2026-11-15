@@ -177,6 +177,25 @@ pub fn genre_albums<VERSION: ProtocolVersion>(genre: &str) -> Request<()> {
 		.unwrap()
 }
 
+pub fn artists<VERSION: ProtocolVersion>() -> Request<()> {
+	Request::builder()
+		.header("Accept-Version", VERSION::header_value())
+		.method(Method::GET)
+		.uri("/api/artists")
+		.body(())
+		.unwrap()
+}
+
+pub fn artist<VERSION: ProtocolVersion>(name: &str) -> Request<()> {
+	let endpoint = format!("/api/artist/{}", url_encode(name));
+	Request::builder()
+		.header("Accept-Version", VERSION::header_value())
+		.method(Method::GET)
+		.uri(endpoint)
+		.body(())
+		.unwrap()
+}
+
 pub fn genre_artists<VERSION: ProtocolVersion>(genre: &str) -> Request<()> {
 	let endpoint = format!("/api/genre/{}/artists", url_encode(genre));
 	Request::builder()

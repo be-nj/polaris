@@ -37,6 +37,9 @@ pub struct Song {
 	pub year: Option<i64>,
 	pub album: Option<String>,
 	pub artwork: Option<PathBuf>,
+	/// Picture found in the directory holding the album this song is part of, which is
+	/// expected to depict the artist of the album
+	pub artist_artwork: Option<PathBuf>,
 	pub duration: Option<i64>,
 	pub lyricists: Vec<String>,
 	pub composers: Vec<String>,
@@ -57,6 +60,7 @@ pub enum State {
 #[derive(Clone)]
 struct Parameters {
 	artwork_regex: Option<Regex>,
+	artist_artwork_regex: Option<Regex>,
 	exclude_regex: Option<Regex>,
 	mount_dirs: Vec<config::MountDir>,
 }
@@ -90,6 +94,8 @@ impl PartialEq for Parameters {
 	fn eq(&self, other: &Self) -> bool {
 		self.artwork_regex.as_ref().map(|r| r.as_str())
 			== other.artwork_regex.as_ref().map(|r| r.as_str())
+			&& self.artist_artwork_regex.as_ref().map(|r| r.as_str())
+				== other.artist_artwork_regex.as_ref().map(|r| r.as_str())
 			&& self.exclude_regex.as_ref().map(|r| r.as_str())
 				== other.exclude_regex.as_ref().map(|r| r.as_str())
 			&& self.mount_dirs == other.mount_dirs
@@ -223,6 +229,8 @@ impl Scanner {
 	async fn read_parameters(&self) -> Parameters {
 		let album_art_pattern = self.config_manager.get_index_album_art_pattern().await;
 		let artwork_regex = Regex::new(&format!("(?i){}", &album_art_pattern)).ok();
+		let artist_art_pattern = self.config_manager.get_index_artist_art_pattern().await;
+		let artist_artwork_regex = Regex::new(&format!("(?i){}", &artist_art_pattern)).ok();
 		let exclude_regex = self
 			.config_manager
 			.get_scan_exclude_pattern()
@@ -230,6 +238,7 @@ impl Scanner {
 			.and_then(|p| Regex::new(&format!("(?i){}", &p)).ok());
 		Parameters {
 			artwork_regex,
+			artist_artwork_regex,
 			exclude_regex,
 			mount_dirs: self.config_manager.get_mounts().await,
 		}
@@ -427,10 +436,13 @@ impl Scan {
 			.unwrap_or_else(|| min(num_cpus::get(), 8));
 		info!("Browsing collection using {} threads", num_threads);
 
-		let directories_output = self.directories_output.clone();
-		let songs_output = self.songs_output.clone();
-		let artwork_regex = self.parameters.artwork_regex.clone();
-		let exclude_regex = self.parameters.exclude_regex.clone();
+		let context = ScanContext {
+			directories_output: self.directories_output.clone(),
+			songs_output: self.songs_output.clone(),
+			artwork_regex: self.parameters.artwork_regex.clone(),
+			artist_artwork_regex: self.parameters.artist_artwork_regex.clone(),
+			exclude_regex: self.parameters.exclude_regex.clone(),
+		};
 
 		let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build()?;
 		thread_pool.scope({
@@ -441,11 +453,8 @@ impl Scan {
 							scope,
 							mount.source,
 							mount.name,
-							directories_output.clone(),
-							songs_output.clone(),
-							artwork_regex.clone(),
-							exclude_regex.clone(),
-							None,
+							context.clone(),
+							InheritedArtwork::default(),
 						);
 					});
 				}
@@ -456,15 +465,44 @@ impl Scan {
 	}
 }
 
+/// What every directory of a scan needs to know
+#[derive(Clone)]
+struct ScanContext {
+	directories_output: Sender<Directory>,
+	songs_output: Sender<Song>,
+	artwork_regex: Option<Regex>,
+	artist_artwork_regex: Option<Regex>,
+	exclude_regex: Option<Regex>,
+}
+
+/// Pictures found in the directories above the one being scanned
+#[derive(Clone, Default)]
+struct InheritedArtwork {
+	/// Album art of the parent directory
+	album: Option<PathBuf>,
+	/// Picture of an artist in the parent directory
+	parent_artist: Option<PathBuf>,
+	/// Picture of an artist in the directory above the parent directory
+	grandparent_artist: Option<PathBuf>,
+}
+
+/// Remembers `candidate` if it is preferable to `current`. When several files qualify, the
+/// choice must not depend on the order the file system happens to list them in.
+fn prefer_file(current: &mut Option<PathBuf>, candidate: &Path) {
+	let is_preferred = current
+		.as_ref()
+		.is_none_or(|current| compare_file_names(candidate, current).is_lt());
+	if is_preferred {
+		*current = Some(candidate.to_owned());
+	}
+}
+
 fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 	scope: &Scope,
 	real_path: P,
 	virtual_path: Q,
-	directories_output: Sender<Directory>,
-	songs_output: Sender<Song>,
-	artwork_regex: Option<Regex>,
-	exclude_regex: Option<Regex>,
-	parent_artwork_file: Option<PathBuf>,
+	context: ScanContext,
+	inherited: InheritedArtwork,
 ) {
 	let read_dir = match fs::read_dir(&real_path) {
 		Ok(read_dir) => read_dir,
@@ -481,6 +519,7 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 	let mut directories = vec![];
 	let mut files = vec![];
 	let mut artwork_file: Option<PathBuf> = None;
+	let mut artist_artwork_file: Option<PathBuf> = None;
 
 	for entry in read_dir {
 		let entry = match entry {
@@ -507,7 +546,7 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 			}
 		};
 		let name = entry.file_name();
-		if is_excluded(exclude_regex.as_ref(), &name) {
+		if is_excluded(context.exclude_regex.as_ref(), &name) {
 			continue;
 		}
 
@@ -518,17 +557,14 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 			directories.push((entry_real_path, entry_virtual_path));
 		} else if utils::get_audio_format(&entry_real_path).is_some() {
 			files.push((entry_real_path, entry_virtual_path));
-		} else if artwork_regex
-			.as_ref()
-			.is_some_and(|r| r.is_match(name.to_str().unwrap_or_default()))
-		{
-			// When several files qualify, the choice must not depend on the order the
-			// file system happens to list them in
-			let is_preferred = artwork_file
-				.as_ref()
-				.is_none_or(|current| compare_file_names(&entry_virtual_path, current).is_lt());
-			if is_preferred {
-				artwork_file = Some(entry_virtual_path);
+		} else {
+			let name = name.to_str().unwrap_or_default();
+			let matches = |regex: &Option<Regex>| regex.as_ref().is_some_and(|r| r.is_match(name));
+			if matches(&context.artwork_regex) {
+				prefer_file(&mut artwork_file, &entry_virtual_path);
+			}
+			if matches(&context.artist_artwork_regex) {
+				prefer_file(&mut artist_artwork_file, &entry_virtual_path);
 			}
 		}
 	}
@@ -540,27 +576,34 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 		.file_name()
 		.and_then(|n| n.to_str())
 		.is_some_and(|n| DISC_DIRECTORY_REGEX.is_match(n));
-	let artwork_file = artwork_file.or(parent_artwork_file.filter(|_| is_disc_directory));
+	let artwork_file = artwork_file.or(inherited.album.filter(|_| is_disc_directory));
+
+	// Collections are commonly organized with one directory per artist, holding one
+	// directory per album. A picture next to the directory of an album is a candidate for
+	// depicting its artist. Whether it actually does is decided when building the index,
+	// based on all the songs it is a candidate for.
+	let artist_artwork = match is_disc_directory {
+		true => inherited.grandparent_artist,
+		false => inherited.parent_artist.clone(),
+	};
 
 	// Sub-directories are handed out before reading the songs of this directory, which is
 	// the slow part, so that other threads can get to work
 	for (directory_real_path, directory_virtual_path) in directories {
 		scope.spawn({
-			let directories_output = directories_output.clone();
-			let songs_output = songs_output.clone();
-			let artwork_regex = artwork_regex.clone();
-			let exclude_regex = exclude_regex.clone();
-			let artwork_file = artwork_file.clone();
+			let context = context.clone();
+			let inherited = InheritedArtwork {
+				album: artwork_file.clone(),
+				parent_artist: artist_artwork_file.clone(),
+				grandparent_artist: inherited.parent_artist.clone(),
+			};
 			|scope| {
 				process_directory(
 					scope,
 					directory_real_path,
 					directory_virtual_path,
-					directories_output,
-					songs_output,
-					artwork_regex,
-					exclude_regex,
-					artwork_file,
+					context,
+					inherited,
 				);
 			}
 		});
@@ -586,16 +629,18 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 			year: metadata.year.map(|n| n as i64),
 			album: metadata.album,
 			artwork,
+			artist_artwork: artist_artwork.clone(),
 			duration: metadata.duration.map(|n| n as i64),
 			lyricists: metadata.lyricists,
 			composers: metadata.composers,
 			genres: metadata.genres,
 			labels: metadata.labels,
 		};
-		songs_output.send(song).ok();
+		context.songs_output.send(song).ok();
 	}
 
-	directories_output
+	context
+		.directories_output
 		.send(Directory {
 			virtual_path: virtual_path.as_ref().to_owned(),
 		})
@@ -642,6 +687,7 @@ mod test {
 		let (songs_sender, songs_receiver) = channel();
 		let parameters = Parameters {
 			artwork_regex: None,
+			artist_artwork_regex: None,
 			exclude_regex: None,
 			mount_dirs: vec![config::MountDir {
 				source: ["test-data", "small-collection"].iter().collect(),
@@ -665,6 +711,7 @@ mod test {
 		let (songs_sender, songs_receiver) = channel();
 		let parameters = Parameters {
 			artwork_regex: None,
+			artist_artwork_regex: None,
 			exclude_regex: None,
 			mount_dirs: vec![config::MountDir {
 				source: ["test-data", "small-collection"].iter().collect(),
@@ -691,6 +738,7 @@ mod test {
 			let (songs_sender, songs_receiver) = channel();
 			let parameters = Parameters {
 				artwork_regex: Some(Regex::new(pattern).unwrap()),
+				artist_artwork_regex: None,
 				exclude_regex: None,
 				mount_dirs: vec![config::MountDir {
 					source: ["test-data", "small-collection"].iter().collect(),
@@ -710,12 +758,8 @@ mod test {
 	}
 
 	/// Scans a collection made of copies of a song and of an image, at the specified
-	/// locations. Returns the artwork of each song.
-	fn scan_artwork(
-		test_name: String,
-		files: &[&str],
-		artwork_regex: &str,
-	) -> std::collections::HashMap<String, Option<String>> {
+	/// locations.
+	fn scan_files(test_name: String, files: &[&str], artwork_regex: &str) -> Vec<Song> {
 		let collection_dir = crate::test::prepare_test_directory(test_name);
 		let song: PathBuf = ["test-data", "formats", "sample.mp3"].iter().collect();
 		let song_with_artwork: PathBuf = ["test-data", "artwork", "sample.mp3"].iter().collect();
@@ -733,8 +777,10 @@ mod test {
 
 		let (directories_sender, _directories_receiver) = channel();
 		let (songs_sender, songs_receiver) = channel();
+		let make_regex = |pattern: &str| Some(Regex::new(&format!("(?i){pattern}")).unwrap());
 		let parameters = Parameters {
-			artwork_regex: Some(Regex::new(&format!("(?i){artwork_regex}")).unwrap()),
+			artwork_regex: make_regex(artwork_regex),
+			artist_artwork_regex: make_regex(config::DEFAULT_ARTIST_ART_PATTERN),
 			exclude_regex: None,
 			mount_dirs: vec![config::MountDir {
 				source: collection_dir,
@@ -744,20 +790,90 @@ mod test {
 		Scan::new(directories_sender, songs_sender, parameters)
 			.run()
 			.unwrap();
+		songs_receiver.iter().collect()
+	}
 
-		let to_string = |p: &Path| {
-			let components = p.components().map(|c| c.as_os_str().to_string_lossy());
-			components.collect::<Vec<_>>().join("/")
-		};
-		songs_receiver
+	fn path_to_string(path: &Path) -> String {
+		let components = path.components().map(|c| c.as_os_str().to_string_lossy());
+		components.collect::<Vec<_>>().join("/")
+	}
+
+	/// Scans a collection (see `scan_files`) and returns the artwork of each song.
+	fn scan_artwork(
+		test_name: String,
+		files: &[&str],
+		artwork_regex: &str,
+	) -> std::collections::HashMap<String, Option<String>> {
+		scan_files(test_name, files, artwork_regex)
 			.iter()
 			.map(|s| {
-				(
-					to_string(&s.virtual_path),
-					s.artwork.as_deref().map(to_string),
-				)
+				let artwork = s.artwork.as_deref().map(path_to_string);
+				(path_to_string(&s.virtual_path), artwork)
 			})
 			.collect()
+	}
+
+	/// Scans a collection (see `scan_files`) and returns the picture found for the artist
+	/// of each song.
+	fn scan_artist_artwork(
+		test_name: String,
+		files: &[&str],
+	) -> std::collections::HashMap<String, Option<String>> {
+		scan_files(test_name, files, config::DEFAULT_ALBUM_ART_PATTERN)
+			.iter()
+			.map(|s| {
+				let artwork = s.artist_artwork.as_deref().map(path_to_string);
+				(path_to_string(&s.virtual_path), artwork)
+			})
+			.collect()
+	}
+
+	#[tokio::test]
+	async fn finds_artist_pictures_next_to_albums() {
+		let artwork = scan_artist_artwork(
+			test_name!(),
+			&[
+				"a/artist.jpg",
+				"a/album/song.mp3",
+				"a/album/cover.jpg",
+				"a/other album/CD1/song.mp3",
+				"a/other album/CD2/song.mp3",
+				"a/loose.mp3",
+				"b/Folder.PNG",
+				"b/album/song.mp3",
+				"c/artist.jpg",
+				"c/folder.jpg",
+				"c/album/song.mp3",
+				"d/album/song.mp3",
+				"d/album/artist.jpg",
+				"d/portrait.jpg",
+			],
+		);
+		assert_eq!(
+			artwork["root/a/album/song.mp3"].as_deref(),
+			Some("root/a/artist.jpg")
+		);
+		// Discs are one level further down
+		for disc in ["CD1", "CD2"] {
+			let song = format!("root/a/other album/{disc}/song.mp3");
+			assert_eq!(
+				artwork[&song].as_deref(),
+				Some("root/a/artist.jpg"),
+				"{disc}"
+			);
+		}
+		assert_eq!(
+			artwork["root/b/album/song.mp3"].as_deref(),
+			Some("root/b/Folder.PNG")
+		);
+		assert_eq!(
+			artwork["root/c/album/song.mp3"].as_deref(),
+			Some("root/c/artist.jpg")
+		);
+		// Pictures are expected next to the directory of the album, not inside of it or
+		// anywhere else
+		assert_eq!(artwork["root/a/loose.mp3"], None);
+		assert_eq!(artwork["root/d/album/song.mp3"], None);
 	}
 
 	#[tokio::test]
@@ -959,6 +1075,7 @@ mod test {
 			let (songs_sender, songs_receiver) = channel();
 			let parameters = Parameters {
 				artwork_regex: None,
+				artist_artwork_regex: None,
 				exclude_regex,
 				mount_dirs: vec![config::MountDir {
 					source: collection_dir.clone(),
@@ -991,6 +1108,7 @@ mod test {
 	fn excluded_paths_are_relative_to_mounts() {
 		let parameters = Parameters {
 			artwork_regex: None,
+			artist_artwork_regex: None,
 			exclude_regex: Some(Regex::new(config::DEFAULT_SCAN_EXCLUDE_PATTERN).unwrap()),
 			mount_dirs: vec![config::MountDir {
 				source: PathBuf::from_iter(["home", ".music"]),

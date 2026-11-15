@@ -2,7 +2,7 @@ use std::{
 	borrow::BorrowMut,
 	cmp::Ordering,
 	collections::{HashMap, HashSet},
-	path::PathBuf,
+	path::{Path, PathBuf},
 };
 
 use itertools::Itertools;
@@ -13,7 +13,7 @@ use tinyvec::TinyVec;
 use unicase::UniCase;
 
 use crate::app::index::dictionary::Dictionary;
-use crate::app::index::storage::{self, AlbumKey, ArtistKey, GenreKey, SongKey};
+use crate::app::index::storage::{self, AlbumKey, ArtistKey, GenreKey, PathKey, SongKey};
 
 use super::{dictionary, storage::fetch_song};
 
@@ -34,6 +34,7 @@ pub struct Genre {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ArtistHeader {
 	pub name: UniCase<String>,
+	pub artwork: Option<PathBuf>,
 	pub num_albums_as_performer: u32,
 	pub num_albums_as_additional_performer: u32,
 	pub num_albums_as_composer: u32,
@@ -366,6 +367,11 @@ fn make_album_header(album: &storage::Album, dictionary: &Dictionary) -> AlbumHe
 fn make_artist_header(artist: &storage::Artist, dictionary: &Dictionary) -> ArtistHeader {
 	ArtistHeader {
 		name: UniCase::new(dictionary.resolve(&artist.name).to_owned()),
+		artwork: artist
+			.artwork
+			.as_ref()
+			.map(|a| dictionary.resolve(&a.0))
+			.map(PathBuf::from),
 		num_albums_as_performer: artist.albums_as_performer.len() as u32,
 		num_albums_as_additional_performer: artist.albums_as_additional_performer.len() as u32,
 		num_albums_as_composer: artist.albums_as_composer.len() as u32,
@@ -391,6 +397,17 @@ pub struct Builder {
 	albums: HashMap<AlbumKey, storage::Album>,
 	genres: HashMap<GenreKey, storage::Genre>,
 	songs: HashMap<SongKey, storage::Song>,
+	artist_artwork: HashMap<PathKey, ArtistArtworkCandidate>,
+}
+
+/// A picture found next to directories of albums, which may depict an artist
+#[derive(Clone, Default)]
+struct ArtistArtworkCandidate {
+	path: PathBuf,
+	/// Number of songs in the albums this picture was found next to
+	num_songs: u32,
+	/// Number of these songs each artist is the main artist of
+	num_songs_by_artist: HashMap<ArtistKey, u32>,
 }
 
 impl Builder {
@@ -407,7 +424,60 @@ impl Builder {
 		);
 	}
 
-	pub fn build(self) -> Collection {
+	/// Records that a picture was found next to the directory of the album this song is
+	/// part of. See [`Builder::assign_artist_artwork`].
+	pub fn add_artist_artwork(&mut self, song: &storage::Song, path: &Path, path_key: PathKey) {
+		let candidate = self.artist_artwork.entry(path_key).or_default();
+		candidate.path = path.to_owned();
+		candidate.num_songs += 1;
+
+		let main_artists = match song.album_artists.is_empty() {
+			true => &song.artists,
+			false => &song.album_artists,
+		};
+		let mut main_artists = main_artists.iter().copied().collect::<Vec<_>>();
+		main_artists.sort();
+		main_artists.dedup();
+		for artist_key in main_artists {
+			*candidate.num_songs_by_artist.entry(artist_key).or_default() += 1;
+		}
+	}
+
+	/// Decides which artists the pictures found next to albums depict.
+	///
+	/// A picture depicts an artist when most of the songs it was found next to are theirs,
+	/// which is the case for the directory holding the albums of an artist. This leaves out
+	/// pictures which sit next to albums of many artists, like a picture at the root of a
+	/// collection which has no directory per artist. Artists whose music is spread over
+	/// several such directories get the picture found next to most of their songs.
+	fn assign_artist_artwork(&mut self) {
+		let mut candidates = self.artist_artwork.iter().collect::<Vec<_>>();
+		// Makes the outcome independent from the order songs were added in
+		candidates.sort_by(|(_, a), (_, b)| a.path.cmp(&b.path));
+
+		let mut best_candidates = HashMap::<ArtistKey, (u32, PathKey)>::new();
+		for (path_key, candidate) in candidates {
+			for (artist_key, num_songs) in &candidate.num_songs_by_artist {
+				if num_songs * 2 <= candidate.num_songs {
+					continue;
+				}
+				let best = best_candidates.entry(*artist_key).or_insert((0, *path_key));
+				if *num_songs > best.0 {
+					*best = (*num_songs, *path_key);
+				}
+			}
+		}
+
+		for (artist_key, (_, path_key)) in best_candidates {
+			if let Some(artist) = self.artists.get_mut(&artist_key) {
+				artist.artwork = Some(path_key);
+			}
+		}
+	}
+
+	pub fn build(mut self) -> Collection {
+		self.assign_artist_artwork();
+
 		let mut recent_albums = self.albums.keys().cloned().collect::<Vec<_>>();
 		recent_albums.sort_by_key(|a| {
 			self.albums
@@ -493,6 +563,7 @@ impl Builder {
 			.entry(artist_key)
 			.or_insert_with(|| storage::Artist {
 				name: artist_key.0,
+				artwork: None,
 				all_albums: HashSet::new(),
 				albums_as_performer: HashSet::new(),
 				albums_as_additional_performer: HashSet::new(),
@@ -612,6 +683,157 @@ mod test {
 		let dictionary = dictionary_builder.build();
 
 		(browser, dictionary)
+	}
+
+	/// Builds a collection where songs come with pictures found next to their album.
+	/// Songs are described as (path of the song, album artists, artists, picture).
+	fn setup_artist_artwork_test(
+		songs: &[(&str, &[&str], &[&str], Option<&str>)],
+	) -> HashMap<String, Option<PathBuf>> {
+		let mut dictionary_builder = dictionary::Builder::default();
+		let mut builder = Builder::default();
+
+		for (path, album_artists, artists, artwork) in songs {
+			let to_strings = |names: &[&str]| names.iter().map(|n| n.to_string()).collect();
+			let song = scanner::Song {
+				virtual_path: PathBuf::from(path),
+				album_artists: to_strings(album_artists),
+				artists: to_strings(artists),
+				album: Some("Album".to_owned()),
+				..Default::default()
+			};
+			let song = store_song(&mut dictionary_builder, &song).unwrap();
+			builder.add_song(&song);
+			if let Some(artwork) = artwork {
+				let artwork = PathBuf::from(artwork);
+				let key = (&artwork).get_or_intern(&mut dictionary_builder).unwrap();
+				builder.add_artist_artwork(&song, &artwork, key);
+			}
+		}
+
+		let collection = builder.build();
+		let dictionary = dictionary_builder.build();
+		collection
+			.get_artists(&dictionary)
+			.into_iter()
+			.map(|a| (a.name.to_string(), a.artwork))
+			.collect()
+	}
+
+	#[test]
+	fn artists_use_picture_found_next_to_their_albums() {
+		let artwork = setup_artist_artwork_test(&[
+			(
+				"FSOL/ISDN/Kai.mp3",
+				&["FSOL"],
+				&["FSOL"],
+				Some("FSOL/artist.jpg"),
+			),
+			(
+				"FSOL/ISDN/Eyes.mp3",
+				&["FSOL"],
+				&["FSOL"],
+				Some("FSOL/artist.jpg"),
+			),
+			// Guests do not own the picture, even on most songs
+			(
+				"FSOL/Lifeforms/1.mp3",
+				&["FSOL"],
+				&["FSOL", "Guest"],
+				Some("FSOL/artist.jpg"),
+			),
+			(
+				"FSOL/Lifeforms/2.mp3",
+				&["FSOL"],
+				&["Guest"],
+				Some("FSOL/artist.jpg"),
+			),
+			(
+				"FSOL/Lifeforms/3.mp3",
+				&["FSOL"],
+				&["Guest"],
+				Some("FSOL/artist.jpg"),
+			),
+			(
+				"FSOL/Lifeforms/4.mp3",
+				&["FSOL"],
+				&["Guest"],
+				Some("FSOL/artist.jpg"),
+			),
+			// Without album artist, the artist of the song stands in
+			("Solo/Album/1.mp3", &[], &["Solo"], Some("Solo/folder.jpg")),
+			("Nobody/Album/1.mp3", &["Nobody"], &["Nobody"], None),
+		]);
+		assert_eq!(artwork["FSOL"], Some(PathBuf::from("FSOL/artist.jpg")));
+		assert_eq!(artwork["Solo"], Some(PathBuf::from("Solo/folder.jpg")));
+		assert_eq!(artwork["Guest"], None);
+		assert_eq!(artwork["Nobody"], None);
+	}
+
+	#[test]
+	fn pictures_next_to_albums_of_many_artists_depict_none_of_them() {
+		// A collection without a directory per artist, with a picture at its root
+		let artwork = setup_artist_artwork_test(&[
+			("ISDN/Kai.mp3", &["FSOL"], &[], Some("folder.jpg")),
+			("ISDN/Eyes.mp3", &["FSOL"], &[], Some("folder.jpg")),
+			("Destiny/1.mp3", &["Stratovarius"], &[], Some("folder.jpg")),
+			("Destiny/2.mp3", &["Stratovarius"], &[], Some("folder.jpg")),
+		]);
+		assert_eq!(artwork["FSOL"], None);
+		assert_eq!(artwork["Stratovarius"], None);
+
+		// Having most songs is not enough, it takes more than half of them
+		let artwork = setup_artist_artwork_test(&[
+			("ISDN/Kai.mp3", &["FSOL"], &[], Some("folder.jpg")),
+			("ISDN/Eyes.mp3", &["FSOL"], &[], Some("folder.jpg")),
+			("Destiny/1.mp3", &["Stratovarius"], &[], Some("folder.jpg")),
+			("Hunted/1.mp3", &["Khemmis"], &[], Some("folder.jpg")),
+		]);
+		assert_eq!(artwork["FSOL"], None);
+	}
+
+	#[test]
+	fn artists_use_picture_of_the_directory_with_most_of_their_songs() {
+		let songs: &[(&str, &[&str], &[&str], Option<&str>)] = &[
+			("FSOL/ISDN/Kai.mp3", &["FSOL"], &[], Some("FSOL/artist.jpg")),
+			(
+				"FSOL/ISDN/Eyes.mp3",
+				&["FSOL"],
+				&[],
+				Some("FSOL/artist.jpg"),
+			),
+			(
+				"Amorphous Androgynous/Tales/1.mp3",
+				&["FSOL"],
+				&[],
+				Some("Amorphous Androgynous/artist.jpg"),
+			),
+			// Collaborations belong to all of their artists
+			(
+				"Together/Album/1.mp3",
+				&["FSOL", "Stratovarius"],
+				&[],
+				Some("Together/artist.jpg"),
+			),
+		];
+		let artwork = setup_artist_artwork_test(songs);
+		assert_eq!(artwork["FSOL"], Some(PathBuf::from("FSOL/artist.jpg")));
+		assert_eq!(
+			artwork["Stratovarius"],
+			Some(PathBuf::from("Together/artist.jpg"))
+		);
+
+		// The outcome does not depend on the order songs are found in
+		let mut reversed = songs.to_vec();
+		reversed.reverse();
+		assert_eq!(setup_artist_artwork_test(&reversed), artwork);
+
+		// Ties are settled by path
+		let artwork = setup_artist_artwork_test(&[
+			("B/Album/1.mp3", &["FSOL"], &[], Some("B/artist.jpg")),
+			("A/Album/1.mp3", &["FSOL"], &[], Some("A/artist.jpg")),
+		]);
+		assert_eq!(artwork["FSOL"], Some(PathBuf::from("A/artist.jpg")));
 	}
 
 	#[test]

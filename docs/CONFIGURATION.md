@@ -18,6 +18,9 @@ The configuration file uses the [TOML](https://toml.io/) format. Everything in t
 # Regular expression matched (case-insensitively) against the name of files next to audio files, to find album art.
 # Defaults to "^(folder|cover|front|album)\\.(jpeg|jpg|png)$". See "Album art" below.
 album_art_pattern = "^(folder|cover)\\.(jpeg|jpg|png)$"
+# Regular expression matched (case-insensitively) against the name of files next to the directories of albums, to find
+# pictures of artists. Defaults to "^(artist|folder)\\.(jpeg|jpg|png)$". See "Pictures of artists" below.
+artist_art_pattern = "^artist\\.(jpeg|jpg|png)$"
 # Regular expression matched (case-insensitively) against the name of each file and directory found while scanning.
 # Matching entries are skipped, along with everything inside matching directories.
 # Defaults to "^\\." which skips hidden files and directories. Set to "" to index everything.
@@ -66,3 +69,30 @@ Polaris looks for the album art of each song in this order:
 3. For songs in a directory holding one disc of an album (a name such as `CD1`, `Disc 2` or `disc_3 - Live`), an image matching `album_art_pattern` in the directory above.
 
 Polaris does not download album art, and does not use images found anywhere else. Changes to `album_art_pattern` take effect with the next scan of the collection, which starts automatically.
+
+## Pictures of artists
+
+Polaris shows a picture for artists when it finds one in the directory holding their albums:
+
+```
+Music/
+  Dire Straits/
+    artist.jpg                  <- picture of Dire Straits
+    1985 - Brothers in Arms/
+      cover.jpg                 <- album art
+      01 - So Far Away.flac
+    1991 - On Every Street/
+      CD1/
+        01 - Calling Elvis.flac
+```
+
+The picture must be next to the directories of the albums (one level above the songs, or two for songs in a disc directory such as `CD1`), and its name must match `artist_art_pattern`. By default, these are `artist` or `folder` with a `jpg`, `jpeg` or `png` extension, in any letter case. When several images match, the first one in alphabetical order is used.
+
+Artists are read from the tags of songs, not from the names of directories. A picture is given to an artist when most of the songs it was found next to are theirs, going by album artist (or by artist, for songs without album artist). This means that:
+
+- The directory does not have to be named after the artist.
+- A picture next to albums of many different artists is not used. This is the case of collections which have no directory per artist, and of directories of compilations.
+- Artists who only appear as guests on the albums of others have no picture.
+- Artists whose albums are spread over several directories use the picture found next to most of their songs.
+
+Like album art, pictures of artists are not downloaded: they have to be saved next to your music, by hand or with the program you use to organize it.

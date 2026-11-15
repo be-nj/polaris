@@ -4,5 +4,5 @@
 !Cargo.lock
 !build.rs
 !src
-!docker/polaris-web-sso.patch
+!docker/polaris-web.patch
 !docker/entrypoint.sh

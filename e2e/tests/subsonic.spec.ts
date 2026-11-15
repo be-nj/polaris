@@ -61,6 +61,17 @@ test("browses artists, albums and songs", async ({ request }) => {
 	const { artist } = await client.getArtist({ id: khemmis!.id });
 	expect(artist.album?.map((a) => a.name)).toEqual(["Hunted"]);
 
+	// Artists have a picture when there is one in the folder holding their albums. Clients
+	// ask for it either with the `coverArt` of the artist, or with the artist itself.
+	expect(khemmis!.coverArt).toBeDefined();
+	for (const id of [khemmis!.coverArt!, khemmis!.id]) {
+		const picture = await client.getCoverArt({ id, size: 64 });
+		expect(picture.headers.get("content-type")).toBe("image/jpeg");
+		expect((await picture.arrayBuffer()).byteLength).toBeGreaterThan(100);
+	}
+	const tobokegao = allArtists.find((a) => a.name === "Tobokegao");
+	expect(tobokegao!.coverArt).toBeUndefined();
+
 	const { album } = await client.getAlbum({ id: artist.album![0].id });
 	expect(album.song?.map((s) => s.title)).toEqual([
 		"Above The Water",

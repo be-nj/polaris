@@ -197,6 +197,7 @@ pub fn artist(header: &index::ArtistHeader) -> Value {
 	json!({
 		"id": Id::Artist(name.clone()).encode(),
 		"name": name,
+		"coverArt": header.artwork.as_ref().map(|a| Id::cover_art(a).encode()),
 		"albumCount": header.num_albums_as_performer + header.num_albums_as_additional_performer,
 	})
 }

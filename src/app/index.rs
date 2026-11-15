@@ -20,6 +20,11 @@ pub use browser::File;
 pub use collection::{Album, AlbumHeader, Artist, ArtistHeader, Genre, GenreHeader, Song};
 use storage::{store_song, AlbumKey, ArtistKey, GenreKey, InternPath, SongKey};
 
+/// Identifies the layout of index files. The serialization format does not describe
+/// itself, which means a file written with a different layout could be read as garbage.
+/// This must change whenever a type which is part of the index changes.
+const INDEX_FILE_HEADER: &[u8] = b"polaris-index-2\n";
+
 #[derive(Clone)]
 pub struct Manager {
 	index_file_path: PathBuf,
@@ -71,8 +76,9 @@ impl Manager {
 	}
 
 	pub async fn persist_index(&self, index: &Index) -> Result<(), Error> {
-		let serialized = match bitcode::serialize(index) {
-			Ok(s) => s,
+		let mut serialized = INDEX_FILE_HEADER.to_vec();
+		match bitcode::serialize(index) {
+			Ok(s) => serialized.extend(s),
 			Err(_) => return Err(Error::IndexSerialization),
 		};
 		tokio::fs::write(&self.index_file_path, &serialized[..])
@@ -92,7 +98,12 @@ impl Manager {
 			.await
 			.map_err(|e| Error::Io(self.index_file_path.clone(), e))?;
 
-		let index = match bitcode::deserialize(&serialized[..]) {
+		// Files written with a different layout cannot be read. They are replaced by the
+		// next scan of the collection.
+		let Some(serialized) = serialized.strip_prefix(INDEX_FILE_HEADER) else {
+			return Err(Error::IndexDeserialization);
+		};
+		let index = match bitcode::deserialize(serialized) {
 			Ok(i) => i,
 			Err(_) => return Err(Error::IndexDeserialization),
 		};
@@ -368,6 +379,12 @@ impl Builder {
 			self.browser_builder
 				.add_song(&mut self.dictionary_builder, &scanner_song);
 			self.collection_builder.add_song(&storage_song);
+			if let Some(artist_artwork) = &scanner_song.artist_artwork {
+				if let Some(key) = artist_artwork.get_or_intern(&mut self.dictionary_builder) {
+					self.collection_builder
+						.add_artist_artwork(&storage_song, artist_artwork, key);
+				}
+			}
 			self.search_builder.add_song(&scanner_song, &storage_song);
 		}
 	}
@@ -388,6 +405,27 @@ mod test {
 		app::{index, test},
 		test_name,
 	};
+
+	#[tokio::test]
+	async fn does_not_restore_index_files_with_another_layout() {
+		let ctx = test::ContextBuilder::new(test_name!()).build().await;
+		let index = index::Builder::default().build();
+		ctx.index_manager.persist_index(&index).await.unwrap();
+		assert!(ctx.index_manager.try_restore_index().await.unwrap());
+
+		// Like files written before the layout of the index was identified
+		let path = &ctx.index_manager.index_file_path;
+		let serialized = std::fs::read(path).unwrap();
+		let without_header = serialized.strip_prefix(index::INDEX_FILE_HEADER).unwrap();
+		std::fs::write(path, without_header).unwrap();
+		assert!(ctx.index_manager.try_restore_index().await.is_err());
+
+		// Files written by a version with a different layout
+		let mut other_layout = b"polaris-index-1\n".to_vec();
+		other_layout.extend(without_header);
+		std::fs::write(path, other_layout).unwrap();
+		assert!(ctx.index_manager.try_restore_index().await.is_err());
+	}
 
 	#[tokio::test]
 	async fn can_persist_index() {

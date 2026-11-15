@@ -954,6 +954,7 @@ async fn get_cover_art(request: &Request) -> Result<Reply, Error> {
 			.next()
 			.and_then(|s| s.artwork),
 		Id::Album { artists, name } => index_manager.get_album(artists, name).await?.header.artwork,
+		Id::Artist(name) => index_manager.get_artist(name).await?.header.artwork,
 		_ => None,
 	};
 	let artwork_path = artwork_path.ok_or_else(Error::not_found)?;

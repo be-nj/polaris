@@ -188,6 +188,25 @@ async fn browses_by_tags() {
 	let artist = find(&index["artist"], "name", "Khemmis");
 	let artist_id = artist["id"].as_str().unwrap();
 
+	// Artists come with the picture found in the directory holding their albums. Clients
+	// request it either through `coverArt`, or with the ID of the artist.
+	let cover_art_id = artist["coverArt"].as_str().unwrap();
+	for id in [cover_art_id, artist_id] {
+		let params = [
+			("u", TEST_USERNAME),
+			("p", TEST_PASSWORD),
+			("id", id),
+			("size", "64"),
+		];
+		let request = protocol::subsonic("getCoverArt", &params);
+		let response = service.fetch_bytes(&request).await;
+		assert_eq!(response.status(), StatusCode::OK);
+		assert!(response.body().starts_with(&[0xFF, 0xD8]));
+	}
+	let index = find(&response["artists"]["index"], "name", "T");
+	let other_artist = find(&index["artist"], "name", "Tobokegao");
+	assert!(other_artist.get("coverArt").is_none());
+
 	let response = call(&mut service, "getArtist", &[("id", artist_id)]).await;
 	assert_eq!(response["artist"]["name"], "Khemmis");
 	let album = find(&response["artist"]["album"], "name", "Hunted");

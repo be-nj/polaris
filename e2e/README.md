@@ -7,7 +7,7 @@ These tests exercise Polaris the way it is actually used: the Docker image runs 
 | `tests/sso.spec.ts` | Single sign-on with [Keycloak](https://www.keycloak.org/), [Authelia](https://www.authelia.com/) and [authentik](https://goauthentik.io/): signing in from the login page of the web client, administrator rights driven by groups, rejection of users without an allowed group, returning to the page that was requested before signing in, refusing to redirect to other websites, and signing in on behalf of an app (including codes that are replayed or redeemed without the secret of the app). |
 | `tests/subsonic.spec.ts` | The Subsonic API, through the [`subsonic-api`](https://www.npmjs.com/package/subsonic-api) client library: authentication, browsing, search, streaming, cover art, bitrate limits and playlists. |
 | `tests/transcoding.spec.ts` | Transcoding with the FFmpeg bundled in the image, including seeking in transcoded songs. |
-| `tests/web.spec.ts` | Signing in to the web client with a password, including returning to the page that was requested before signing in. |
+| `tests/web.spec.ts` | Signing in to the web client with a password, including returning to the page that was requested before signing in. Pictures of artists. |
 
 ## Running the tests
 

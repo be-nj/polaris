@@ -29,6 +29,25 @@ test("returns to the page requested before signing in with a password", async ({
 	await page.waitForURL("**/files");
 });
 
+test("shows pictures of artists", async ({ page }) => {
+	await page.goto("/#/artists/Khemmis");
+	await page.getByLabel("username").fill(LOCAL_USER.name);
+	await page.getByLabel("password").fill(LOCAL_USER.password);
+	await page.getByTestId("submit-login").click();
+
+	// The picture comes from the folder holding the albums of the artist
+	await expect(page.getByRole("heading", { name: "Khemmis" })).toBeVisible();
+	const picture = page.getByTestId("artist-picture");
+	await expect(picture).toBeVisible();
+	await expect.poll(() => picture.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+
+	// Artists without a picture are shown as before
+	await page.goto("/#/artists/Tobokegao");
+	await expect(page.getByRole("heading", { name: "Tobokegao" })).toBeVisible();
+	await expect(page.getByText("Picnic").first()).toBeVisible();
+	await expect(page.getByTestId("artist-picture")).toHaveCount(0);
+});
+
 test("rejects wrong passwords", async ({ page }) => {
 	await page.goto("/");
 	await page.getByLabel("username").fill(LOCAL_USER.name);

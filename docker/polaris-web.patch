@@ -1,3 +1,15 @@
+diff --git a/src/api/dto.ts b/src/api/dto.ts
+index 33d3683..a90eba4 100644
+--- a/src/api/dto.ts
++++ b/src/api/dto.ts
+@@ -65,6 +65,7 @@ export interface Genre extends GenreHeader {
+ 
+ export interface ArtistHeader {
+ 	name: string;
++	artwork?: string;
+ 	num_albums_as_performer: number;
+ 	num_albums_as_additional_performer: number;
+ 	num_albums_as_composer: number;
 diff --git a/src/components/Auth.vue b/src/components/Auth.vue
 index fcf1af2..107b564 100644
 --- a/src/components/Auth.vue
@@ -59,6 +71,42 @@ index fcf1af2..107b564 100644
  async function doLogin(event: Event) {
  	badCredentials.value = false;
  	try {
+diff --git a/src/components/basic/PageHeader.vue b/src/components/basic/PageHeader.vue
+index d8321bd..7346cf5 100644
+--- a/src/components/basic/PageHeader.vue
++++ b/src/components/basic/PageHeader.vue
+@@ -4,6 +4,7 @@
+         <div class="min-w-0 flex flex-col items-stretch gap-y-4 xl:flex-row xl:items-center">
+             <slot name="jumbo">
+                 <div class="min-w-0 flex items-center">
++                    <slot name="pre-title" />
+                     <h3 class="text-4xl text-ls-500 dark:text-ds-400 whitespace-nowrap overflow-hidden text-ellipsis">
+                         {{ title }}
+                     </h3>
+diff --git a/src/components/library/Artist.vue b/src/components/library/Artist.vue
+index bccff5b..e173f2c 100644
+--- a/src/components/library/Artist.vue
++++ b/src/components/library/Artist.vue
+@@ -1,6 +1,10 @@
+ <template>
+     <div class="flex flex-col">
+         <PageHeader :title="name">
++            <template #pre-title v-if="artist?.artwork">
++                <img :src="makeThumbnailURL(artist.artwork, 'small')" :alt="name" data-pw="artist-picture"
++                    class="mr-4 h-12 w-12 shrink-0 rounded-full object-cover" />
++            </template>
+             <template #right>
+                 <div
+                     class="basis-auto xl:basis-0 grow max-h-6 my-1.5 xl:mb-0 overflow-hidden flex flex-wrap xl:justify-end gap-2">
+@@ -63,7 +67,7 @@ import { useAsyncState } from "@vueuse/core";
+ import { useRouter } from "vue-router";
+ 
+ import { AlbumHeader, AlbumKey } from "@/api/dto";
+-import { getAlbum, getArtist, } from "@/api/endpoints";
++import { getAlbum, getArtist, makeThumbnailURL } from "@/api/endpoints";
+ import Badge from '@/components/basic/Badge.vue';
+ import Button from '@/components/basic/Button.vue';
+ import ButtonGroup from '@/components/basic/ButtonGroup.vue';
 diff --git a/src/router.ts b/src/router.ts
 index e3f279a..ec38b8d 100644
 --- a/src/router.ts

@@ -11,8 +11,8 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/*
 WORKDIR /web
 RUN git clone --depth 1 --branch "${POLARIS_WEB_REF}" https://github.com/agersant/polaris-web.git .
-COPY docker/polaris-web-sso.patch /tmp/polaris-web-sso.patch
-RUN git apply /tmp/polaris-web-sso.patch \
+COPY docker/polaris-web.patch /tmp/polaris-web.patch
+RUN git apply /tmp/polaris-web.patch \
 	&& npm ci --no-audit --no-fund \
 	&& npm run build
 
