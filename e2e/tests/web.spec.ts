@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-import { LOCAL_USER, expectSignedIn } from "./support/polaris";
+import { LOCAL_USER, POLARIS_URL, expectSignedIn } from "./support/polaris";
 
 test("signs in with a password and shows the collection", async ({ page }) => {
 	await page.goto("/");
@@ -27,7 +27,7 @@ test("rejects wrong passwords", async ({ page }) => {
 
 test("offers every configured single sign-on provider", async ({ page }) => {
 	await page.goto("/");
-	const providers = await (await page.request.get("/api/oidc/providers")).json();
+	const providers = await (await page.request.get(`${POLARIS_URL}/api/oidc/providers`)).json();
 	expect(providers.length).toBeGreaterThan(0);
 	for (const provider of providers) {
 		await expect(page.getByRole("link", { name: `Sign in with ${provider.display_name}` })).toBeVisible();
