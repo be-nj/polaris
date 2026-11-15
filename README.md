@@ -39,6 +39,8 @@ The goals of this project are:
 
 [Installation documentation](docs/SETUP.md)
 
+[Running Polaris with Docker](docs/DOCKER.md)
+
 [Streaming from remote devices](docs/DDNS.md)
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/polaris-streaming.svg?columns=3)](https://repology.org/project/polaris-streaming/versions)

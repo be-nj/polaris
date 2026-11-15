@@ -90,6 +90,10 @@ Tests are inline `#[cfg(test)]` modules next to the code, plus shared harnesses:
 
 Fixtures are in `test-data/` (`small-collection` is the standard mount; other directories cover formats, artwork, multi-value tags and playlist import/export). Paths to fixtures are relative, so tests must run from the repository root.
 
+## Docker image
+
+`Dockerfile` builds the image published to `ghcr.io/be-nj/polaris` by `.github/workflows/docker.yml` (user docs in `docs/DOCKER.md`, example `docker-compose.yml` at the repository root). It has three stages: the web client (a pinned polaris-web tag plus `docker/polaris-web-sso.patch`, which adds single sign-on buttons to the login page), the server (cross-compiled when the target architecture differs from the build machine) and a Debian runtime with FFmpeg. `docker/entrypoint.sh` prepares `/config`, `/data` and `/cache` and drops root privileges to `PUID`/`PGID`. `.dockerignore` is an allowlist: new files needed by the build must be added to it.
+
 ## Releases and changelog
 
 User-visible changes are recorded in `CHANGELOG.md` under "Unreleased Changes". Releases are cut by the manually triggered "Make Release" GitHub workflow (`docs/MAINTENANCE.md`); `Cargo.toml` keeps version `0.0.0` and the real version is injected at release time.

@@ -1,0 +1,30 @@
+# Runs Polaris with Docker Compose. See docs/DOCKER.md for details.
+#
+#   1. Set the location of your music collection below
+#   2. Run `docker compose up -d`
+#   3. Open http://localhost:5050 and follow the setup instructions
+
+services:
+  polaris:
+    image: ghcr.io/be-nj/polaris:latest
+    # To build the image from the source code in this folder instead of downloading it,
+    # comment out `image` above and uncomment the following line:
+    # build: .
+    container_name: polaris
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    environment:
+      # User and group Polaris runs as. Files it creates in the folders below belong to them.
+      # Run `id` to find yours.
+      PUID: 1000
+      PGID: 1000
+    volumes:
+      # Your music collection. Add it in the Polaris settings as `/music`.
+      - /path/to/your/music:/music:ro
+      # Configuration file (polaris.toml)
+      - ./config:/config
+      # Playlists and collection index
+      - ./data:/data
+      # Thumbnails, waveforms and transcoded songs. Safe to delete.
+      - ./cache:/cache

@@ -9,7 +9,7 @@
 
 ## In a docker container
 
-To run polaris from a Docker container, please follow instructions from the [polaris-docker](https://github.com/agersant/polaris-docker) repository.
+To run Polaris from a Docker container, follow the [Docker instructions](DOCKER.md).
 
 ## From source on Linux
 

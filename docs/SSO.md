@@ -6,7 +6,7 @@ Signing in with a username and password keeps working alongside single sign-on.
 
 ## How it works
 
-1. The user opens `https://your-polaris-server/api/oidc/PROVIDER_NAME/start` in their browser. This is a link you can bookmark, or add as an application to the dashboard of your identity provider.
+1. The user opens `https://your-polaris-server/api/oidc/PROVIDER_NAME/start` in their browser. This is a link you can bookmark, or add as an application to the dashboard of your identity provider. The web client included in the [Docker image](DOCKER.md) also shows a button for each provider on its login page.
 2. Polaris redirects to the sign-in page of the provider.
 3. After signing in, the provider redirects back to Polaris, which opens the web client with the user signed in.
 

@@ -6,13 +6,14 @@
 
 - Added single sign-on through OpenID Connect providers such as Authelia, authentik or Keycloak, with optional role-based access and administrator mapping. See the [documentation](docs/SSO.md).
 - Added on-demand audio transcoding to `mp3`, `opus` or `aac`, using FFmpeg when it is installed. The `/audio` endpoint accepts new `format` and `bitrate` parameters, and the new `/transcoding` endpoint reports whether transcoding is available. See the [documentation](docs/TRANSCODING.md).
-- Added support for the Subsonic API (with OpenSubsonic extensions) under `/rest`, allowing third-party Subsonic clients to connect to Polaris. See the [documentation](docs/SUBSONIC.md) for setup instructions and limitations.
+- Added support for the Subsonic API (with OpenSubsonic extensions) under `/rest`, allowing third-party Subsonic clients (including web-based ones, thanks to CORS support on these endpoints) to connect to Polaris. See the [documentation](docs/SUBSONIC.md) for setup instructions and limitations.
 - Added a `scan_exclude_pattern` setting to skip files and directories while scanning the collection (eg. Synology `@eaDir` or ZFS `.zfs` folders).
 - ⚠️ Hidden files and directories (names starting with `.`) are no longer indexed by default. Set `scan_exclude_pattern = ""` to restore the previous behavior.
 - Authentication tokens are now invalidated when a user changes their password.
 
 ### General
 
+- This repository now contains a `Dockerfile` and a `docker-compose.yml` to run Polaris (server, web client and FFmpeg) with Docker. See the [documentation](docs/DOCKER.md).
 - Docker images are now published on [Docker Hub](https://hub.docker.com/r/agersant/polaris) and maintained in the [agersant/polaris-docker](https://github.com/agersant/polaris-docker/) repository. Thank you @ogarcia for all the years maintaining `docker-polaris`.
 
 ### Server

@@ -19,9 +19,10 @@ use axum::{
 	Router,
 };
 use axum_extra::{headers::Range, TypedHeader};
-use http::{header, HeaderMap, HeaderValue};
+use http::{header, HeaderMap, HeaderValue, Method};
 use rand::seq::SliceRandom;
 use serde_json::{json, Map, Value};
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::app::{self, auth, index, scanner, thumbnail, transcode, App};
 
@@ -37,7 +38,16 @@ use response::{Error, Format, Payload};
 const MAX_PAGE_SIZE: usize = 500;
 
 pub fn router() -> Router<App> {
-	Router::new().route("/{endpoint}", get(handle).post(handle))
+	// Web-based Subsonic clients are served from origins other than this server.
+	// Requests are authenticated by their parameters and never by cookies, which makes
+	// it safe to accept them from any origin.
+	let cors = CorsLayer::new()
+		.allow_origin(Any)
+		.allow_methods([Method::GET, Method::POST])
+		.allow_headers(Any);
+	Router::new()
+		.route("/{endpoint}", get(handle).post(handle))
+		.layer(cors)
 }
 
 struct Params(Vec<(String, String)>);

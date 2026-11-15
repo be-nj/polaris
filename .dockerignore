@@ -1,0 +1,8 @@
+# Only the server sources and the files under docker/ are needed to build the image
+*
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!src
+!docker/polaris-web-sso.patch
+!docker/entrypoint.sh

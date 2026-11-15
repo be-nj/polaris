@@ -1,0 +1,48 @@
+diff --git a/src/components/Auth.vue b/src/components/Auth.vue
+index fcf1af2..ee7e14a 100644
+--- a/src/components/Auth.vue
++++ b/src/components/Auth.vue
+@@ -13,12 +13,19 @@
+ 				<Button label="Sign In" type="submit" size="xl" data-pw="submit-login" class="w-full"
+ 					:disabled="!username || !password" />
+ 			</form>
++			<div v-if="ssoProviders.length" class="mt-8 space-y-3">
++				<div class="text-center text-sm text-ls-500 dark:text-ds-400">or</div>
++				<a v-for="provider in ssoProviders" :key="provider.name" :href="provider.login_url" data-pw="sso-login"
++					class="flex w-full items-center justify-center rounded-md px-3.5 py-2.5 text-sm font-semibold whitespace-nowrap shadow-sm bg-ls-0 hover:bg-ls-50 text-ls-900 ring-1 ring-inset ring-ls-300 dark:bg-ds-0/10 dark:hover:bg-ds-0/20 dark:text-ds-0 dark:ring-0">
++					Sign in with {{ provider.display_name }}
++				</a>
++			</div>
+ 		</div>
+ 	</div>
+ </template>
+ 
+ <script setup lang="ts">
+-import { ref } from "vue";
++import { onMounted, ref } from "vue";
+ 
+ import Button from "@/components/basic/Button.vue";
+ import InputText from "@/components/basic/InputText.vue";
+@@ -30,6 +37,22 @@ const username = ref("");
+ const password = ref("");
+ const badCredentials = ref(false);
+ 
++// Single sign-on providers configured on the server, if any
++interface SSOProvider {
++	name: string,
++	display_name: string,
++	login_url: string,
++}
++const ssoProviders = ref<SSOProvider[]>([]);
++onMounted(async () => {
++	try {
++		const response = await fetch("api/oidc/providers");
++		if (response.ok) {
++			ssoProviders.value = await response.json();
++		}
++	} catch (e) { }
++});
++
+ async function doLogin(event: Event) {
+ 	badCredentials.value = false;
+ 	try {

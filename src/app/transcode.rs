@@ -341,16 +341,19 @@ impl Manager {
 		match progress.outcome {
 			Some(true) => Ok(Output::File(cache_path)),
 			Some(false) => Err(Error::Transcoding(audio_path.to_owned())),
-			None => {
-				let file = tokio::fs::File::open(&job.partial_path)
-					.await
-					.map_err(|e| Error::Io(job.partial_path.clone(), e))?;
-				Ok(Output::InProgress(Reader {
+			None => match tokio::fs::File::open(&job.partial_path).await {
+				Ok(file) => Ok(Output::InProgress(Reader {
 					file,
 					position: 0,
 					progress: job.progress,
-				}))
-			}
+				})),
+				// The job may complete, and move its output to its final location, right
+				// after reporting progress. The partial file no longer exists in that case.
+				Err(e) => match job.progress.wait_for(|p| p.outcome.is_some()).await {
+					Ok(progress) if progress.outcome == Some(true) => Ok(Output::File(cache_path)),
+					_ => Err(Error::Io(job.partial_path.clone(), e)),
+				},
+			},
 		}
 	}
 

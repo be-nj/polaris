@@ -651,3 +651,34 @@ async fn limits_stream_bitrate() {
 		assert_eq!(opus_body, flac);
 	}
 }
+
+#[tokio::test]
+async fn allows_requests_from_web_clients() {
+	let mut service = make_service(&test_name!()).await;
+	let params = [("u", TEST_USERNAME), ("p", TEST_PASSWORD), ("f", "json")];
+	let mut request = protocol::subsonic("ping", &params);
+	request.headers_mut().insert(
+		header::ORIGIN,
+		"https://subsonic-client.example.com".parse().unwrap(),
+	);
+	let response = service.fetch(&request).await;
+	assert_eq!(response.status(), StatusCode::OK);
+	assert_eq!(
+		response
+			.headers()
+			.get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+			.unwrap(),
+		"*"
+	);
+
+	// The Polaris API is not opened up to other origins
+	let mut request = protocol::version();
+	request.headers_mut().insert(
+		header::ORIGIN,
+		"https://subsonic-client.example.com".parse().unwrap(),
+	);
+	let response = service.fetch(&request).await;
+	assert!(!response
+		.headers()
+		.contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+}
