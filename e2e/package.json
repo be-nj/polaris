@@ -1,0 +1,14 @@
+{
+  "name": "polaris-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests for Polaris",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "^22.0.0",
+    "subsonic-api": "3.4.1"
+  }
+}

@@ -1,0 +1,58 @@
+# Authelia configuration used by the end-to-end tests. Every secret in this file is a
+# throwaway value: do not reuse any of it.
+server:
+  address: "tcp://0.0.0.0:9091/"
+  tls:
+    certificate: "/certs/authelia.crt"
+    key: "/certs/authelia.key"
+
+log:
+  level: "info"
+
+identity_validation:
+  reset_password:
+    jwt_secret: "e2e-only-reset-password-jwt-secret"
+
+authentication_backend:
+  file:
+    path: "/config/users.yml"
+
+access_control:
+  default_policy: "one_factor"
+
+session:
+  secret: "e2e-only-session-secret"
+  cookies:
+    - domain: "authelia.test"
+      authelia_url: "https://authelia.test:9091"
+
+storage:
+  encryption_key: "e2e-only-storage-encryption-key"
+  local:
+    path: "/tmp/authelia.sqlite3"
+
+notifier:
+  filesystem:
+    filename: "/tmp/authelia-notifications.txt"
+
+identity_providers:
+  oidc:
+    hmac_secret: "e2e-only-oidc-hmac-secret"
+    jwks:
+      - key: {{ secret "/certs/authelia-oidc.key" | mindent 10 "|" | msquote }}
+    clients:
+      - client_id: "polaris"
+        client_name: "Polaris"
+        client_secret: "$plaintext$authelia-client-secret"
+        public: false
+        authorization_policy: "one_factor"
+        consent_mode: "implicit"
+        require_pkce: true
+        pkce_challenge_method: "S256"
+        redirect_uris:
+          - "http://polaris.test:5050/api/oidc/authelia/callback"
+        scopes:
+          - "openid"
+          - "profile"
+          - "groups"
+        token_endpoint_auth_method: "client_secret_basic"

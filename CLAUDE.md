@@ -90,6 +90,10 @@ Tests are inline `#[cfg(test)]` modules next to the code, plus shared harnesses:
 
 Fixtures are in `test-data/` (`small-collection` is the standard mount; other directories cover formats, artwork, multi-value tags and playlist import/export). Paths to fixtures are relative, so tests must run from the repository root.
 
+## End-to-end tests
+
+`e2e/` holds Playwright tests which run the Docker image next to real Keycloak, Authelia and authentik containers and drive it with a real browser and the `subsonic-api` client library (see `e2e/README.md`). `./e2e/run.sh` does everything: prepares `e2e/runtime` (certificates, config copy), starts the Compose services, waits for them, runs the tests and tears down. Set `POLARIS_IMAGE` to test an existing image instead of building one. Services are addressed as `*.test` host names, which the test browser maps to localhost. These run in CI through `.github/workflows/e2e.yml`. A new identity provider needs a Compose service, an `[[oidc_providers]]` entry in `e2e/polaris.toml`, a readiness check in `run.sh` and a `signIn` implementation in `tests/sso.spec.ts`.
+
 ## Docker image
 
 `Dockerfile` builds the image published to `ghcr.io/be-nj/polaris` by `.github/workflows/docker.yml` (user docs in `docs/DOCKER.md`, example `docker-compose.yml` at the repository root). It has three stages: the web client (a pinned polaris-web tag plus `docker/polaris-web-sso.patch`, which adds single sign-on buttons to the login page), the server (cross-compiled when the target architecture differs from the build machine) and a Debian runtime with FFmpeg. `docker/entrypoint.sh` prepares `/config`, `/data` and `/cache` and drops root privileges to `PUID`/`PGID`. `.dockerignore` is an allowlist: new files needed by the build must be added to it.

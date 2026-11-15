@@ -1,0 +1,92 @@
+# Services the end-to-end tests run against. See README.md.
+name: polaris-e2e
+
+services:
+  polaris:
+    image: ${POLARIS_IMAGE:-polaris-e2e}
+    build: ..
+    ports:
+      - "5050:5050"
+    environment:
+      PUID: ${E2E_UID:-1000}
+      PGID: ${E2E_GID:-1000}
+    volumes:
+      - ./runtime/polaris:/config
+      - ./runtime/certs:/certs:ro
+      - ../test-data:/music:ro
+    networks:
+      default:
+        aliases:
+          - polaris.test
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+    networks:
+      default:
+        aliases:
+          - keycloak.test
+
+  authelia:
+    image: authelia/authelia:4.39.28
+    environment:
+      X_AUTHELIA_CONFIG_FILTERS: template
+    ports:
+      - "9091:9091"
+    volumes:
+      - ./authelia:/config:ro
+      - ./runtime/certs:/certs:ro
+    networks:
+      default:
+        aliases:
+          - authelia.test
+
+  authentik-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: authentik
+      POSTGRES_DB: authentik
+
+  authentik:
+    image: ghcr.io/goauthentik/server:2026.8.5
+    command: server
+    depends_on:
+      - authentik-postgres
+    environment: &authentik-environment
+      AUTHENTIK_SECRET_KEY: e2e-only-authentik-secret-key
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_BOOTSTRAP_PASSWORD: e2e-only-authentik-admin-password
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      # authentik listens on IPv6 by default, which is not available in every Docker setup
+      AUTHENTIK_LISTEN__HTTP: 0.0.0.0:9000
+      AUTHENTIK_LISTEN__HTTPS: 0.0.0.0:9443
+      AUTHENTIK_LISTEN__METRICS: 0.0.0.0:9300
+    ports:
+      - "9000:9000"
+    volumes: &authentik-volumes
+      - ./authentik/blueprint.yaml:/blueprints/polaris-e2e.yaml:ro
+    networks:
+      default:
+        aliases:
+          - authentik.test
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2026.8.5
+    command: worker
+    depends_on:
+      - authentik-postgres
+    environment: *authentik-environment
+    volumes: *authentik-volumes

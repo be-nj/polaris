@@ -1,0 +1,61 @@
+{
+  "realm": "polaris",
+  "enabled": true,
+  "sslRequired": "none",
+  "roles": {
+    "realm": [
+      { "name": "polaris-users" },
+      { "name": "polaris-admins" }
+    ]
+  },
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Administrator",
+      "credentials": [{ "type": "password", "value": "alice-password", "temporary": false }],
+      "realmRoles": ["polaris-users", "polaris-admins"]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@example.com",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Listener",
+      "credentials": [{ "type": "password", "value": "bob-password", "temporary": false }],
+      "realmRoles": ["polaris-users"]
+    },
+    {
+      "username": "mallory",
+      "enabled": true,
+      "email": "mallory@example.com",
+      "emailVerified": true,
+      "firstName": "Mallory",
+      "lastName": "Outsider",
+      "credentials": [{ "type": "password", "value": "mallory-password", "temporary": false }],
+      "realmRoles": []
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "polaris",
+      "name": "Polaris",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "keycloak-client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://polaris.test:5050/api/oidc/keycloak/callback"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ]
+}

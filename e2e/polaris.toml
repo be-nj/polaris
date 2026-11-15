@@ -1,0 +1,51 @@
+# Polaris configuration used by the end-to-end tests.
+# This file is copied to runtime/polaris/polaris.toml before each run.
+
+public_url = "http://polaris.test:5050"
+
+[[mount_dirs]]
+name = "collection"
+source = "/music/small-collection"
+
+[[mount_dirs]]
+name = "formats"
+source = "/music/formats"
+
+[[users]]
+name = "local-admin"
+initial_password = "local-admin-password"
+admin = true
+
+[[users]]
+name = "local-user"
+initial_password = "local-user-password"
+
+[[oidc_providers]]
+name = "keycloak"
+display_name = "Keycloak"
+issuer = "http://keycloak.test:8080/realms/polaris"
+client_id = "polaris"
+client_secret = "keycloak-client-secret"
+role_claim = "realm_access.roles"
+allowed_roles = ["polaris-users"]
+admin_roles = ["polaris-admins"]
+
+[[oidc_providers]]
+name = "authelia"
+display_name = "Authelia"
+issuer = "https://authelia.test:9091"
+client_id = "polaris"
+client_secret = "authelia-client-secret"
+scopes = ["groups"]
+allowed_roles = ["polaris-users"]
+admin_roles = ["polaris-admins"]
+ca_file = "/certs/ca.crt"
+
+[[oidc_providers]]
+name = "authentik"
+display_name = "authentik"
+issuer = "http://authentik.test:9000/application/o/polaris/"
+client_id = "polaris"
+client_secret = "authentik-client-secret"
+allowed_roles = ["polaris-users"]
+admin_roles = ["polaris-admins"]

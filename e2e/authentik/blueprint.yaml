@@ -1,0 +1,86 @@
+# authentik objects used by the end-to-end tests: users, groups, and the OAuth2 provider
+# and application Polaris signs users in with.
+version: 1
+metadata:
+  name: Polaris end-to-end tests
+entries:
+  # Objects created by authentik itself, which the entries below refer to
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider authorization flow (implicit consent)
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider invalidation flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: System - OAuth2 Provider - Scopes
+      required: true
+
+  - model: authentik_core.group
+    id: group-users
+    identifiers:
+      name: polaris-users
+  - model: authentik_core.group
+    id: group-admins
+    identifiers:
+      name: polaris-admins
+
+  - model: authentik_core.user
+    identifiers:
+      username: alice
+    attrs:
+      name: Alice Administrator
+      email: alice@example.com
+      password: alice-password
+      groups:
+        - !KeyOf group-users
+        - !KeyOf group-admins
+  - model: authentik_core.user
+    identifiers:
+      username: bob
+    attrs:
+      name: Bob Listener
+      email: bob@example.com
+      password: bob-password
+      groups:
+        - !KeyOf group-users
+  - model: authentik_core.user
+    identifiers:
+      username: mallory
+    attrs:
+      name: Mallory Outsider
+      email: mallory@example.com
+      password: mallory-password
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: provider
+    identifiers:
+      name: Polaris
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      client_type: confidential
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: polaris
+      client_secret: authentik-client-secret
+      redirect_uris:
+        - matching_mode: strict
+          url: http://polaris.test:5050/api/oidc/authentik/callback
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+
+  - model: authentik_core.application
+    identifiers:
+      slug: polaris
+    attrs:
+      name: Polaris
+      provider: !KeyOf provider

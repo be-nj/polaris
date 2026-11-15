@@ -1,0 +1,20 @@
+# Passwords are `<username>-password`
+users:
+  alice:
+    displayname: "Alice Administrator"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$lwRy6of/rTyGNpimJ40AKg$dokrm8z4yD9pzXLrDiVwCUNoEfrGlsLHrhjnYxcJ4Fw"
+    email: "alice@example.com"
+    groups:
+      - "polaris-users"
+      - "polaris-admins"
+  bob:
+    displayname: "Bob Listener"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$Zll+mEeuEqOgY7N2Z+wQtw$AfU8vzYkpVY4AaEj6WRyHYPx5wZHMphtH1Mugiv2vXw"
+    email: "bob@example.com"
+    groups:
+      - "polaris-users"
+  mallory:
+    displayname: "Mallory Outsider"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$GBtlOXvGVvbn1ND8cjeMrw$J38eN8wAPk0Md8vPiPUByDrWt673yb1MhpkwVBEHPsM"
+    email: "mallory@example.com"
+    groups: []

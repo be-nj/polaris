@@ -59,6 +59,95 @@ At the provider, register a client for Polaris with:
 - **Grant type**: authorization code. Polaris uses PKCE (`S256`), which may be set as required.
 - **Client type**: confidential (with a secret) is recommended.
 
+## Provider examples
+
+The following setups are covered by the [end-to-end tests](../e2e/README.md) of this repository, which sign in through each of these providers with a real web browser. In all of them, `https://polaris.example.com` stands for the address of your Polaris server.
+
+### Authelia
+
+Tested with Authelia 4.39. In the Authelia configuration, declare a client for Polaris:
+
+```yaml
+identity_providers:
+  oidc:
+    clients:
+      - client_id: "polaris"
+        client_name: "Polaris"
+        # Digest of the client secret, generated with:
+        # authelia crypto hash generate pbkdf2 --variant sha512
+        client_secret: "$pbkdf2-sha512$..."
+        public: false
+        authorization_policy: "two_factor"
+        require_pkce: true
+        pkce_challenge_method: "S256"
+        redirect_uris:
+          - "https://polaris.example.com/api/oidc/authelia/callback"
+        scopes:
+          - "openid"
+          - "profile"
+          - "groups"
+        token_endpoint_auth_method: "client_secret_basic"
+```
+
+In the Polaris configuration:
+
+```toml
+[[oidc_providers]]
+name = "authelia"
+display_name = "Authelia"
+issuer = "https://auth.example.com"
+client_id = "polaris"
+client_secret = "the-client-secret-in-plain-text"
+# Needed for Authelia to tell Polaris which groups users belong to
+scopes = ["groups"]
+allowed_roles = ["music"]
+admin_roles = ["admins"]
+```
+
+### authentik
+
+Tested with authentik 2026.8. In the authentik admin interface:
+
+1. Create an **OAuth2/OpenID Provider**: client type _Confidential_, redirect URI `https://polaris.example.com/api/oidc/authentik/callback` (strict matching), and the default scopes (`openid`, `profile`, `email`). Note its client ID and client secret.
+2. Create an **Application** using this provider. Its slug is part of the issuer address below.
+
+In the Polaris configuration:
+
+```toml
+[[oidc_providers]]
+name = "authentik"
+display_name = "authentik"
+# The last part of this address is the slug of the application
+issuer = "https://authentik.example.com/application/o/polaris/"
+client_id = "the-client-id"
+client_secret = "the-client-secret"
+allowed_roles = ["music"]
+admin_roles = ["admins"]
+```
+
+authentik includes the groups of users in the `profile` scope, so no additional scope is needed.
+
+### Keycloak
+
+Tested with Keycloak 26.8. In the Keycloak admin console, create a client in your realm: client type _OpenID Connect_, _Client authentication_ on, _Standard flow_ enabled, and `https://polaris.example.com/api/oidc/keycloak/callback` as valid redirect URI. The client secret is on the _Credentials_ tab of the client.
+
+In the Polaris configuration:
+
+```toml
+[[oidc_providers]]
+name = "keycloak"
+display_name = "Keycloak"
+issuer = "https://keycloak.example.com/realms/your-realm"
+client_id = "polaris"
+client_secret = "the-client-secret"
+# Realm roles of the user
+role_claim = "realm_access.roles"
+allowed_roles = ["music"]
+admin_roles = ["admins"]
+```
+
+This uses realm roles, which Keycloak lists in its access tokens without further configuration. To use groups instead of roles, Keycloak has to be told to include them, with a _Group Membership_ mapper on the client (`groups` as token claim name, _Full group path_ off); the `role_claim` line can then be removed. This variant is not covered by the tests.
+
 ## Security considerations
 
 - **Users are matched by name.** Someone signing in through a provider as `alice` gets access to the existing Polaris user called `alice`, if there is one. Only configure providers you trust to control usernames, and do not let users of the provider pick names that match existing Polaris administrators.

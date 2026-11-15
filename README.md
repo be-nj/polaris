@@ -48,6 +48,12 @@ Every feature of this fork is covered by automated tests that run on each push, 
 - Single sign-on is tested against an identity provider built into the tests, with attempts to replay sign-ins, tamper with identity tokens, reuse authorization codes and hijack a sign-in from another browser.
 - Transcoding tests run real FFmpeg conversions, concurrent requests for the same song, seeking and cache eviction.
 
+On top of that, [end-to-end tests](e2e/README.md) run the Docker image next to real third-party software:
+
+- Single sign-on is performed in a real web browser against Keycloak, Authelia and authentik, starting from the login page of the web client.
+- The Subsonic API is used through a third-party Subsonic client library.
+- Songs are transcoded by the FFmpeg bundled in the image.
+
 Problems found and fixed along the way include a race condition that made a transcoded stream fail when its conversion finished at the wrong moment, sign-ins being rejected with Keycloak because it only lists roles in access tokens, and a wrong setting name (`ddns_update_url`) in the configuration documentation.
 
 # About

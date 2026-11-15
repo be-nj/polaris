@@ -4,8 +4,8 @@ on:
   push:
     branches:
       - master
-      # Publishes preview images while the work on this branch has not been merged yet.
-      # Remove this line once it has.
+      # Publishes images (including `latest`) while the work on this branch has not been
+      # merged yet. Remove this line, and the references to it below, once it has.
       - claude/init-pahuj2
     tags:
       - "*"
@@ -35,7 +35,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref_name == 'master' || github.ref_name == 'claude/init-pahuj2' }}
             type=raw,value=preview,enable=${{ github.ref_name == 'claude/init-pahuj2' }}
             type=ref,event=tag
             type=sha
