@@ -7,6 +7,7 @@ use rand::RngCore;
 
 use crate::paths::Paths;
 
+pub mod artist_image;
 pub mod auth;
 pub mod config;
 pub mod ddns;
@@ -132,6 +133,10 @@ pub enum Error {
 	DirectoryNotFound(PathBuf),
 	#[error("Artist not found")]
 	ArtistNotFound,
+	#[error("No picture is available for this artist")]
+	ArtistImageNotFound,
+	#[error("Could not look up a picture for artist `{0}`: {1}")]
+	ArtistImageLookup(String, String),
 	#[error("Album not found")]
 	AlbumNotFound,
 	#[error("Genre not found")]
@@ -188,6 +193,7 @@ pub struct App {
 	pub playlist_manager: playlist::Manager,
 	pub thumbnail_manager: thumbnail::Manager,
 	pub transcode_manager: transcode::Manager,
+	pub artist_image_manager: artist_image::Manager,
 }
 
 impl App {
@@ -228,6 +234,12 @@ impl App {
 			config_manager.clone(),
 		);
 
+		let artist_image_manager = artist_image::Manager::new(
+			paths.cache_dir_path.join("artist_images"),
+			config_manager.clone(),
+			index_manager.clone(),
+		);
+
 		let app = Self {
 			socket_address,
 			web_dir_path: paths.web_dir_path,
@@ -240,6 +252,7 @@ impl App {
 			playlist_manager,
 			thumbnail_manager,
 			transcode_manager,
+			artist_image_manager,
 		};
 
 		Ok(app)

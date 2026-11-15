@@ -43,6 +43,7 @@ pub struct Config {
 	pub artist_art_pattern: Option<Regex>,
 	pub scan_exclude_pattern: Option<Regex>,
 	pub transcode_cache_size_mb: Option<u64>,
+	pub fetch_artist_images: Option<bool>,
 	pub ddns_update_url: Option<http::Uri>,
 	pub mount_dirs: Vec<MountDir>,
 	pub users: Vec<User>,
@@ -77,6 +78,7 @@ impl TryFrom<storage::Config> for Config {
 		};
 
 		config.transcode_cache_size_mb = c.transcode_cache_size_mb;
+		config.fetch_artist_images = c.fetch_artist_images;
 
 		config.public_url = c
 			.public_url
@@ -114,6 +116,7 @@ impl From<Config> for storage::Config {
 			artist_art_pattern: c.artist_art_pattern.map(|p| p.as_str().to_owned()),
 			scan_exclude_pattern: c.scan_exclude_pattern.map(|p| p.as_str().to_owned()),
 			transcode_cache_size_mb: c.transcode_cache_size_mb,
+			fetch_artist_images: c.fetch_artist_images,
 			mount_dirs: c.mount_dirs.into_iter().map(|d| d.into()).collect(),
 			ddns_update_url: c.ddns_update_url.map(|u| u.to_string()),
 			users: c.users.into_iter().map(|u| u.into()).collect(),
@@ -295,6 +298,12 @@ impl Manager {
 		config
 			.transcode_cache_size_mb
 			.unwrap_or(transcode::DEFAULT_CACHE_SIZE_MB)
+	}
+
+	/// Whether pictures of artists may be looked up online when the collection has none
+	pub async fn get_fetch_artist_images(&self) -> bool {
+		let config = self.config.read().await;
+		config.fetch_artist_images.unwrap_or(false)
 	}
 
 	pub async fn get_ddns_update_url(&self) -> Option<http::Uri> {

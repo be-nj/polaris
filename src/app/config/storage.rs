@@ -29,6 +29,8 @@ pub struct Config {
 	pub scan_exclude_pattern: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub transcode_cache_size_mb: Option<u64>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub fetch_artist_images: Option<bool>,
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub mount_dirs: Vec<MountDir>,
 	#[serde(skip_serializing_if = "Option::is_none")]

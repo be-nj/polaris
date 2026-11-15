@@ -16,7 +16,10 @@ use tower_http::{compression::CompressionLayer, CompressionLevel};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{
-	app::{auth, config, ddns, index, peaks, playlist, scanner, thumbnail, transcode, App},
+	app::{
+		artist_image, auth, config, ddns, index, peaks, playlist, scanner, thumbnail, transcode,
+		App,
+	},
 	server::{
 		dto, error::APIError, APIMajorVersion, API_ARRAY_SEPARATOR, API_MAJOR_VERSION,
 		API_MINOR_VERSION,
@@ -54,6 +57,7 @@ pub fn router() -> OpenApiRouter<App> {
 		.routes(routes!(get_random_albums))
 		.routes(routes!(get_artists))
 		.routes(routes!(get_artist))
+		.routes(routes!(get_artist_thumbnail))
 		.routes(routes!(get_album))
 		.routes(routes!(get_genres))
 		.routes(routes!(get_genre))
@@ -632,6 +636,52 @@ async fn get_artist(
 ) -> Result<Json<dto::Artist>, APIError> {
 	let artist = index_manager.get_artist(name).await?.into();
 	Ok(Json(artist))
+}
+
+#[utoipa::path(
+	get,
+	path = "/artist/{name}/thumbnail",
+	tag = "Media",
+	description = "Serves a picture of an artist. This is an image file found in the directory named after the artist in the collection (`artist.jpg` or `folder.jpg`), or when there is none and the `fetch_artist_images` setting is enabled, a picture looked up online. Responds with status 404 when no picture is available.\n\nThis endpoint supports HTTP range requests to facilitate streaming.",
+	security(
+		("auth_token" = []),
+		("auth_query_param" = []),
+	),
+	params(
+		("name", example = "Claude Frank"),
+		dto::ThumbnailOptions
+	),
+	responses(
+		(status = 206, body = [u8]),
+		(status = 200, body = [u8]),
+		(status = 404),
+	)
+)]
+async fn get_artist_thumbnail(
+	_auth: Auth,
+	State(artist_image_manager): State<artist_image::Manager>,
+	State(thumbnails_manager): State<thumbnail::Manager>,
+	Path(name): Path<String>,
+	Query(options_input): Query<dto::ThumbnailOptions>,
+	range: Option<TypedHeader<Range>>,
+) -> Result<impl IntoResponse, APIError> {
+	let options = thumbnail::Options::from(options_input);
+	let image_path = artist_image_manager.get_image(&name).await?;
+
+	let thumbnail_path = thumbnails_manager
+		.get_thumbnail(&image_path, &options)
+		.await?;
+
+	let Ok(file) = tokio::fs::File::open(thumbnail_path).await else {
+		return Err(APIError::ThumbnailFileIO);
+	};
+
+	let Ok(body) = KnownSize::file(file).await else {
+		return Err(APIError::ThumbnailFileIO);
+	};
+
+	let range = range.map(|TypedHeader(r)| r);
+	Ok(Ranged::new(range, body))
 }
 
 #[utoipa::path(

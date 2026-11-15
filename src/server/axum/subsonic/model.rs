@@ -192,12 +192,20 @@ pub fn album_as_directory(album: &index::Album) -> Value {
 	})
 }
 
-pub fn artist(header: &index::ArtistHeader) -> Value {
+/// `online_pictures` tells whether pictures of artists who have none in the collection are
+/// looked up online. Whether one exists is then only known once it is asked for, which is
+/// why such artists refer to a picture which may turn out to be missing.
+pub fn artist(header: &index::ArtistHeader, online_pictures: bool) -> Value {
 	let name = header.name.to_string();
+	let cover_art = match &header.artwork {
+		Some(artwork) => Some(Id::cover_art(artwork).encode()),
+		None if online_pictures => Some(Id::Artist(name.clone()).encode()),
+		None => None,
+	};
 	json!({
 		"id": Id::Artist(name.clone()).encode(),
 		"name": name,
-		"coverArt": header.artwork.as_ref().map(|a| Id::cover_art(a).encode()),
+		"coverArt": cover_art,
 		"albumCount": header.num_albums_as_performer + header.num_albums_as_additional_performer,
 	})
 }

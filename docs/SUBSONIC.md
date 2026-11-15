@@ -20,7 +20,7 @@ Clients that support OpenSubsonic API keys can be given a Polaris authentication
 - Search
 - Streaming and downloading songs, with support for seeking
 - Bitrate limits (`maxBitRate`), when [transcoding](TRANSCODING.md) is available. Without it, songs are streamed as they are.
-- Album art and pictures of artists
+- Album art and pictures of artists, including those looked up online (see `fetch_artist_images` in the [configuration](CONFIGURATION.md#pictures-of-artists))
 - Playlists (each user only sees their own playlists)
 - Collection scan status, and triggering a scan (administrators only)
 

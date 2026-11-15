@@ -10,6 +10,21 @@ index 33d3683..a90eba4 100644
  	num_albums_as_performer: number;
  	num_albums_as_additional_performer: number;
  	num_albums_as_composer: number;
+diff --git a/src/api/endpoints.ts b/src/api/endpoints.ts
+index f3d647e..704eda0 100644
+--- a/src/api/endpoints.ts
++++ b/src/api/endpoints.ts
+@@ -308,6 +308,10 @@ export function makeAudioURL(path: string) {
+ 	return "api/audio/" + encodeURIComponent(path) + "?auth_token=" + getAuthToken();
+ }
+ 
++export function makeArtistThumbnailURL(name: string, size: "tiny" | "small" | "large" | "native") {
++	return `api/artist/${encodeURIComponent(name)}/thumbnail?size=${size}&pad=false&auth_token=${getAuthToken()}`;
++}
++
+ export function makeThumbnailURL(path: string, size: "tiny" | "small" | "large" | "native") {
+ 	size = size || "small";
+ 	return `api/thumbnail/${encodeURIComponent(path)}?size=${size}&pad=false&auth_token=${getAuthToken()}`;
 diff --git a/src/components/Auth.vue b/src/components/Auth.vue
 index fcf1af2..107b564 100644
 --- a/src/components/Auth.vue
@@ -84,29 +99,125 @@ index d8321bd..7346cf5 100644
                          {{ title }}
                      </h3>
 diff --git a/src/components/library/Artist.vue b/src/components/library/Artist.vue
-index bccff5b..e173f2c 100644
+index bccff5b..d644698 100644
 --- a/src/components/library/Artist.vue
 +++ b/src/components/library/Artist.vue
-@@ -1,6 +1,10 @@
+@@ -1,6 +1,11 @@
  <template>
      <div class="flex flex-col">
          <PageHeader :title="name">
-+            <template #pre-title v-if="artist?.artwork">
-+                <img :src="makeThumbnailURL(artist.artwork, 'small')" :alt="name" data-pw="artist-picture"
-+                    class="mr-4 h-12 w-12 shrink-0 rounded-full object-cover" />
++            <template #pre-title v-if="artist && !pictureMissing">
++                <img v-show="pictureLoaded" :src="makeArtistThumbnailURL(name, 'small')" :alt="name"
++                    data-pw="artist-picture" class="mr-4 h-12 w-12 shrink-0 rounded-full object-cover"
++                    @load="pictureLoaded = true" @error="pictureMissing = true" />
 +            </template>
              <template #right>
                  <div
                      class="basis-auto xl:basis-0 grow max-h-6 my-1.5 xl:mb-0 overflow-hidden flex flex-wrap xl:justify-end gap-2">
-@@ -63,7 +67,7 @@ import { useAsyncState } from "@vueuse/core";
+@@ -58,12 +63,12 @@
+ </template>
+ 
+ <script setup lang="ts">
+-import { computed, useTemplateRef, watch } from "vue";
++import { computed, ref, useTemplateRef, watch } from "vue";
+ import { useAsyncState } from "@vueuse/core";
  import { useRouter } from "vue-router";
  
  import { AlbumHeader, AlbumKey } from "@/api/dto";
 -import { getAlbum, getArtist, } from "@/api/endpoints";
-+import { getAlbum, getArtist, makeThumbnailURL } from "@/api/endpoints";
++import { getAlbum, getArtist, makeArtistThumbnailURL } from "@/api/endpoints";
  import Badge from '@/components/basic/Badge.vue';
  import Button from '@/components/basic/Button.vue';
  import ButtonGroup from '@/components/basic/ButtonGroup.vue';
+@@ -87,6 +92,10 @@ const props = defineProps<{
+     name: string,
+ }>();
+ 
++// The server may have no picture of the artist, which is only known once it is asked for
++const pictureLoaded = ref(false);
++const pictureMissing = ref(false);
++
+ const { state: artist, isLoading, error, execute: fetchArtist } = useAsyncState(
+     (name: string) => getArtist(name),
+     undefined,
+@@ -136,6 +145,8 @@ if (!useHistory("artist", [artist, saveScrollState(viewport)])) {
+ }
+ 
+ watch(() => props.name, () => {
++    pictureLoaded.value = false;
++    pictureMissing.value = false;
+     fetchArtist(0, props.name);
+ });
+ 
+diff --git a/src/components/library/ArtistAvatar.vue b/src/components/library/ArtistAvatar.vue
+new file mode 100644
+index 0000000..6372ba5
+--- /dev/null
++++ b/src/components/library/ArtistAvatar.vue
+@@ -0,0 +1,37 @@
++<template>
++    <span class="relative shrink-0 w-10 h-10 rounded-full overflow-hidden
++                flex items-center justify-center
++                text-ls-500 dark:text-ds-400
++                bg-ls-200 dark:bg-ds-700">
++        <span class="material-icons-round">person</span>
++        <img v-if="!missing" :src="makeArtistThumbnailURL(name, 'small')" :alt="name" loading="lazy"
++            class="absolute inset-0 w-full h-full object-cover" @error="onMissing" />
++    </span>
++</template>
++
++<script lang="ts">
++// Artists the server has no picture of. Rows of the artist list come and go while scrolling,
++// which would otherwise ask the server again and again for pictures it does not have.
++const artistsWithoutPicture = new Set<string>();
++</script>
++
++<script setup lang="ts">
++import { ref, watch } from 'vue';
++
++import { makeArtistThumbnailURL } from '@/api/endpoints';
++
++const props = defineProps<{
++    name: string,
++}>();
++
++const missing = ref(artistsWithoutPicture.has(props.name));
++
++watch(() => props.name, (name) => {
++    missing.value = artistsWithoutPicture.has(name);
++});
++
++function onMissing() {
++    artistsWithoutPicture.add(props.name);
++    missing.value = true;
++}
++</script>
+diff --git a/src/components/library/ArtistList.vue b/src/components/library/ArtistList.vue
+index ab23ef1..4b479b7 100644
+--- a/src/components/library/ArtistList.vue
++++ b/src/components/library/ArtistList.vue
+@@ -5,12 +5,7 @@
+             <!-- TODO context menus? -->
+             <li v-for="item of virtualArtists" :key="item.data.name" class="flex items-center first:pt-1 py-4 gap-4"
+                 :style="`height: ${itemHeight}px`">
+-                <span class="material-icons-round rounded-full p-2
+-                            flex items-center justify-center
+-                            text-ls-500 dark:text-ds-400
+-                            bg-ls-200 dark:bg-ds-700">
+-                    person
+-                </span>
++                <ArtistAvatar :name="item.data.name" />
+                 <div class="basis-fit shrink min-w-0 pr-8 flex flex-col">
+                     <span @click="router.push(makeArtistURL(item.data.name))" class="cursor-pointer font-semibold
+                                 overflow-hidden text-ellipsis
+@@ -40,6 +35,7 @@ import { useRouter } from 'vue-router';
+ 
+ import { ArtistHeader } from '@/api/dto';
+ import Badge from "@/components/basic/Badge.vue";
++import ArtistAvatar from "@/components/library/ArtistAvatar.vue";
+ import { pluralize } from '@/format';
+ import { makeArtistURL, makeGenreURL } from "@/router";
+ import { ArtistListMode, usePreferencesStore } from '@/stores/preferences';
 diff --git a/src/router.ts b/src/router.ts
 index e3f279a..ec38b8d 100644
 --- a/src/router.ts

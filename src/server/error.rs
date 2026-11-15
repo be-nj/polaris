@@ -29,6 +29,8 @@ pub enum APIError {
 	DirectoryNotFound(PathBuf),
 	#[error("Artist not found")]
 	ArtistNotFound,
+	#[error("No picture is available for this artist")]
+	ArtistImageNotFound,
 	#[error("Album not found")]
 	AlbumNotFound,
 	#[error("Genre not found")]
@@ -175,6 +177,8 @@ impl From<app::Error> for APIError {
 			app::Error::UserNotFound => APIError::UserNotFound,
 			app::Error::DirectoryNotFound(d) => APIError::DirectoryNotFound(d),
 			app::Error::ArtistNotFound => APIError::ArtistNotFound,
+			app::Error::ArtistImageNotFound => APIError::ArtistImageNotFound,
+			app::Error::ArtistImageLookup(_, _) => APIError::ArtistImageNotFound,
 			app::Error::AlbumNotFound => APIError::AlbumNotFound,
 			app::Error::GenreNotFound => APIError::GenreNotFound,
 			app::Error::SongNotFound => APIError::SongNotFound,

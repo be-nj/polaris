@@ -327,6 +327,18 @@ pub fn thumbnail(path: &Path, size: Option<ThumbnailSize>, pad: Option<bool>) ->
 		.unwrap()
 }
 
+pub fn artist_thumbnail(name: &str) -> Request<()> {
+	let endpoint = format!(
+		"/api/artist/{}/thumbnail?size=small&pad=false",
+		url_encode(name)
+	);
+	Request::builder()
+		.method(Method::GET)
+		.uri(&endpoint)
+		.body(())
+		.unwrap()
+}
+
 pub fn playlists() -> Request<()> {
 	Request::builder()
 		.method(Method::GET)

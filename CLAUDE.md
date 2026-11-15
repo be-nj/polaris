@@ -67,6 +67,8 @@ The scan also decides the artwork of each song (`process_directory`): a picture 
 
 Pictures of artists work differently, since artists come from tags rather than from directories. Each song carries the image matching `artist_art_pattern` found next to the directory of its album (`Song::artist_artwork`), and `collection::Builder::assign_artist_artwork` gives such an image to an artist when most of the songs it was found next to are theirs. Index files start with `INDEX_FILE_HEADER`, which must change along with any serialized index type.
 
+`artist_image::Manager` serves the picture of an artist wherever it comes from (`/api/artist/{name}/thumbnail`, and Subsonic `getCoverArt` with the ID of an artist): the one of the collection, or failing that, and only when `fetch_artist_images` is set, one looked up in the Deezer catalog. It takes the namesake with the largest following and keeps the download under `artist_images/` in the cache directory (a `.missing` marker remembers artists without a picture for 30 days). Tests replace the catalog with an in-process HTTP server.
+
 Paths exposed through the API are *virtual paths*: the first component is a mount name, mapped to a real directory by `config::Manager::resolve_virtual_path` / `virtualize_path`. The index only stores virtual paths.
 
 ### HTTP server
@@ -100,7 +102,7 @@ Fixtures are in `test-data/` (`small-collection` is the standard mount; other di
 
 ## Docker image
 
-`Dockerfile` builds the image published to `ghcr.io/be-nj/polaris` by `.github/workflows/docker.yml` (user docs in `docs/DOCKER.md`, example `docker-compose.yml` at the repository root). It has three stages: the web client (a pinned polaris-web tag plus `docker/polaris-web.patch`, which adds single sign-on buttons to the login page, makes the web client return to the page that was requested before signing in, and shows pictures of artists), the server (cross-compiled when the target architecture differs from the build machine) and a Debian runtime with FFmpeg. `docker/entrypoint.sh` prepares `/config`, `/data` and `/cache` and drops root privileges to `PUID`/`PGID`. `.dockerignore` is an allowlist: new files needed by the build must be added to it.
+`Dockerfile` builds the image published to `ghcr.io/be-nj/polaris` by `.github/workflows/docker.yml` (user docs in `docs/DOCKER.md`, example `docker-compose.yml` at the repository root). It has three stages: the web client (a pinned polaris-web tag plus `docker/polaris-web.patch`, which adds single sign-on buttons to the login page, makes the web client return to the page that was requested before signing in, and shows pictures of artists on their page and in lists of artists), the server (cross-compiled when the target architecture differs from the build machine) and a Debian runtime with FFmpeg. `docker/entrypoint.sh` prepares `/config`, `/data` and `/cache` and drops root privileges to `PUID`/`PGID`. `.dockerignore` is an allowlist: new files needed by the build must be added to it.
 
 ## Releases and changelog
 

@@ -25,6 +25,7 @@ impl IntoResponse for APIError {
 			APIError::DirectoryNotFound(_) => StatusCode::NOT_FOUND,
 			APIError::DuplicateUsername => StatusCode::CONFLICT,
 			APIError::ArtistNotFound => StatusCode::NOT_FOUND,
+			APIError::ArtistImageNotFound => StatusCode::NOT_FOUND,
 			APIError::AlbumNotFound => StatusCode::NOT_FOUND,
 			APIError::GenreNotFound => StatusCode::NOT_FOUND,
 			APIError::SongNotFound => StatusCode::NOT_FOUND,

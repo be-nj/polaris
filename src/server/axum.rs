@@ -76,6 +76,12 @@ impl FromRef<App> for app::ddns::Manager {
 	}
 }
 
+impl FromRef<App> for app::artist_image::Manager {
+	fn from_ref(app: &App) -> Self {
+		app.artist_image_manager.clone()
+	}
+}
+
 impl FromRef<App> for app::peaks::Manager {
 	fn from_ref(app: &App) -> Self {
 		app.peaks_manager.clone()

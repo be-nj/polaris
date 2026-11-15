@@ -545,10 +545,16 @@ async fn get_genres(request: &Request) -> Result<Reply, Error> {
 }
 
 async fn get_artists(request: &Request) -> Result<Reply, Error> {
+	let online_pictures = request.app.config_manager.get_fetch_artist_images().await;
 	let artists = performing_artists(request)
 		.await
 		.iter()
-		.map(|header| (header.name.to_string(), model::artist(header)))
+		.map(|header| {
+			(
+				header.name.to_string(),
+				model::artist(header, online_pictures),
+			)
+		})
 		.collect();
 	Reply::single(
 		"artists",
@@ -564,7 +570,8 @@ async fn get_artist(request: &Request) -> Result<Reply, Error> {
 		return Err(Error::not_found());
 	};
 	let artist = request.app.index_manager.get_artist(name).await?;
-	let mut value = model::artist(&artist.header);
+	let online_pictures = request.app.config_manager.get_fetch_artist_images().await;
+	let mut value = model::artist(&artist.header, online_pictures);
 	value["albumCount"] = json!(artist.albums.len());
 	value["album"] = artist.albums.iter().map(model::album).collect();
 	Reply::single("artist", value)
@@ -721,7 +728,11 @@ async fn search(request: &Request, tag_based: bool) -> Result<Reply, Error> {
 	let song_paths = paginate(song_paths, params.page("songCount", "songOffset", 20));
 	let songs = fetch_songs(request, song_paths).await;
 
-	let artists = artists.iter().map(model::artist).collect::<Vec<_>>();
+	let online_pictures = request.app.config_manager.get_fetch_artist_images().await;
+	let artists = artists
+		.iter()
+		.map(|header| model::artist(header, online_pictures))
+		.collect::<Vec<_>>();
 	let songs = model::songs(&songs);
 	if tag_based {
 		let albums = albums.iter().map(model::album).collect::<Vec<_>>();
@@ -945,25 +956,19 @@ async fn stream(request: &Request, as_attachment: bool) -> Result<Reply, Error> 
 }
 
 async fn get_cover_art(request: &Request) -> Result<Reply, Error> {
-	let index_manager = &request.app.index_manager;
-	let artwork_path = match request.params.id("id")? {
-		Id::CoverArt(path) => Some(path),
-		Id::Song(path) => fetch_songs(request, vec![path])
-			.await
-			.into_iter()
-			.next()
-			.and_then(|s| s.artwork),
-		Id::Album { artists, name } => index_manager.get_album(artists, name).await?.header.artwork,
-		Id::Artist(name) => index_manager.get_artist(name).await?.header.artwork,
-		_ => None,
-	};
-	let artwork_path = artwork_path.ok_or_else(Error::not_found)?;
+	let id = request.params.id("id")?;
 
-	let image_path = request
-		.app
-		.config_manager
-		.resolve_virtual_path(&artwork_path)
-		.await?;
+	// Pictures of artists may also come from outside the collection
+	let image_path = if let Id::Artist(name) = &id {
+		request
+			.app
+			.artist_image_manager
+			.get_image(name)
+			.await
+			.map_err(|_| Error::not_found())?
+	} else {
+		cover_art_path(request, id).await?
+	};
 
 	let options = thumbnail::Options {
 		max_dimension: request
@@ -986,6 +991,28 @@ async fn get_cover_art(request: &Request) -> Result<Reply, Error> {
 		.headers_mut()
 		.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));
 	Ok(Reply::Binary(response))
+}
+
+async fn cover_art_path(request: &Request, id: Id) -> Result<PathBuf, Error> {
+	let index_manager = &request.app.index_manager;
+	let artwork_path = match id {
+		Id::CoverArt(path) => Some(path),
+		Id::Song(path) => fetch_songs(request, vec![path])
+			.await
+			.into_iter()
+			.next()
+			.and_then(|s| s.artwork),
+		Id::Album { artists, name } => index_manager.get_album(artists, name).await?.header.artwork,
+		_ => None,
+	};
+	let artwork_path = artwork_path.ok_or_else(Error::not_found)?;
+
+	let image_path = request
+		.app
+		.config_manager
+		.resolve_virtual_path(&artwork_path)
+		.await?;
+	Ok(image_path)
 }
 
 async fn get_user(request: &Request) -> Result<Reply, Error> {

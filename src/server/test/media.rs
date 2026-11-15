@@ -224,6 +224,43 @@ async fn thumbnail_golden_path() {
 }
 
 #[tokio::test]
+async fn artist_thumbnail_requires_auth() {
+	let mut service = ServiceType::new(&test_name!()).await;
+	let request = protocol::artist_thumbnail("Khemmis");
+	let response = service.fetch(&request).await;
+	assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn artist_thumbnail_golden_path() {
+	let mut service = ServiceType::new(&test_name!()).await;
+	service.complete_initial_setup().await;
+	service.login_admin().await;
+	service.index().await;
+	service.login().await;
+
+	let request = protocol::artist_thumbnail("Khemmis");
+	let response = service.fetch_bytes(&request).await;
+	assert_eq!(response.status(), StatusCode::OK);
+	assert!(response.body().starts_with(&[0xFF, 0xD8]));
+}
+
+#[tokio::test]
+async fn artist_thumbnail_without_picture_returns_not_found() {
+	let mut service = ServiceType::new(&test_name!()).await;
+	service.complete_initial_setup().await;
+	service.login_admin().await;
+	service.index().await;
+	service.login().await;
+
+	for name in ["Tobokegao", "Not An Artist"] {
+		let request = protocol::artist_thumbnail(name);
+		let response = service.fetch(&request).await;
+		assert_eq!(response.status(), StatusCode::NOT_FOUND);
+	}
+}
+
+#[tokio::test]
 async fn thumbnail_bad_path_returns_not_found() {
 	let mut service = ServiceType::new(&test_name!()).await;
 	service.complete_initial_setup().await;
