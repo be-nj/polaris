@@ -122,15 +122,25 @@ impl Config {
 	) -> Result<auth::Token, Error> {
 		let user = self.get_user(username).ok_or(Error::IncorrectUsername)?;
 		if auth::verify_password(&user.hashed_password, password) {
-			let authorization = auth::Authorization {
-				username: username.to_owned(),
-				scope: auth::Scope::PolarisAuth,
-				generation: auth::checksum(&user.hashed_password),
-			};
-			auth::generate_auth_token(&authorization, auth_secret)
+			self.issue_token(username, auth_secret)
 		} else {
 			Err(Error::IncorrectPassword)
 		}
+	}
+
+	/// Creates an authentication token for a user, without verifying their identity.
+	pub fn issue_token(
+		&self,
+		username: &str,
+		auth_secret: &auth::Secret,
+	) -> Result<auth::Token, Error> {
+		let user = self.get_user(username).ok_or(Error::IncorrectUsername)?;
+		let authorization = auth::Authorization {
+			username: username.to_owned(),
+			scope: auth::Scope::PolarisAuth,
+			generation: auth::checksum(&user.hashed_password),
+		};
+		auth::generate_auth_token(&authorization, auth_secret)
 	}
 
 	pub fn set_is_admin(&mut self, username: &str, is_admin: bool) -> Result<(), Error> {

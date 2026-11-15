@@ -38,6 +38,19 @@ pub struct Authorization {
 	pub is_admin: bool,
 }
 
+/// A single sign-on provider users can sign in with
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct OidcProvider {
+	#[schema(examples("authelia"))]
+	pub name: String,
+	/// User-facing name of the provider
+	#[schema(examples("Authelia"))]
+	pub display_name: String,
+	/// Location to send the browser of the user to in order to sign in with this provider
+	#[schema(examples("/api/oidc/authelia/start"))]
+	pub login_url: String,
+}
+
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuthQueryParameters {
 	#[schema(

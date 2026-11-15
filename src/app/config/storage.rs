@@ -33,4 +33,33 @@ pub struct Config {
 	pub ddns_update_url: Option<String>,
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub users: Vec<User>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub public_url: Option<String>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub oidc_providers: Vec<OidcProvider>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct OidcProvider {
+	pub name: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub display_name: Option<String>,
+	pub issuer: String,
+	pub client_id: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub client_secret: Option<String>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub scopes: Vec<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub username_claim: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub role_claim: Option<String>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub allowed_roles: Vec<String>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub admin_roles: Vec<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub token_auth_method: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub ca_file: Option<PathBuf>,
 }

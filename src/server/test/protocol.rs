@@ -387,7 +387,7 @@ fn url_encode(input: &str) -> String {
 	percent_encode(input.as_bytes(), NON_ALPHANUMERIC).to_string()
 }
 
-fn subsonic_query(params: &[(&str, &str)]) -> String {
+fn encode_query(params: &[(&str, &str)]) -> String {
 	form_urlencoded::Serializer::new(String::new())
 		.extend_pairs(params)
 		.finish()
@@ -396,7 +396,7 @@ fn subsonic_query(params: &[(&str, &str)]) -> String {
 pub fn subsonic(endpoint: &str, params: &[(&str, &str)]) -> Request<()> {
 	Request::builder()
 		.method(Method::GET)
-		.uri(format!("/rest/{endpoint}?{}", subsonic_query(params)))
+		.uri(format!("/rest/{endpoint}?{}", encode_query(params)))
 		.body(())
 		.unwrap()
 }
@@ -409,6 +409,33 @@ pub fn subsonic_form_post(endpoint: &str, params: &[(&str, &str)]) -> Request<Ve
 			http::header::CONTENT_TYPE,
 			"application/x-www-form-urlencoded",
 		)
-		.body(subsonic_query(params).into_bytes())
+		.body(encode_query(params).into_bytes())
+		.unwrap()
+}
+
+pub fn oidc_providers() -> Request<()> {
+	Request::builder()
+		.method(Method::GET)
+		.uri("/api/oidc/providers")
+		.body(())
+		.unwrap()
+}
+
+pub fn oidc_start(provider: &str) -> Request<()> {
+	Request::builder()
+		.method(Method::GET)
+		.uri(format!("/api/oidc/{provider}/start"))
+		.body(())
+		.unwrap()
+}
+
+pub fn oidc_callback(provider: &str, params: &[(&str, &str)]) -> Request<()> {
+	Request::builder()
+		.method(Method::GET)
+		.uri(format!(
+			"/api/oidc/{provider}/callback?{}",
+			encode_query(params)
+		))
+		.body(())
 		.unwrap()
 }

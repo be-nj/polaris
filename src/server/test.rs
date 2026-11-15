@@ -16,6 +16,7 @@ mod browser;
 mod collection;
 mod docs;
 mod media;
+mod oidc;
 mod playlist;
 mod search;
 mod settings;

@@ -13,6 +13,7 @@ pub mod ddns;
 pub mod formats;
 pub mod index;
 pub mod ndb;
+pub mod oidc;
 pub mod peaks;
 pub mod playlist;
 pub mod scanner;
@@ -95,6 +96,18 @@ pub enum Error {
 	ScanExcludePatternInvalid,
 	#[error("DDNS update URL is invalid")]
 	DDNSUpdateURLInvalid,
+	#[error("Configuration of OpenID Connect provider `{0}` is invalid: {1}")]
+	OidcProviderInvalid(String, String),
+	#[error("Unknown OpenID Connect provider")]
+	OidcProviderNotFound,
+	#[error("Could not communicate with OpenID Connect provider: {0}")]
+	OidcProviderUnreachable(String),
+	#[error("OpenID Connect provider returned an invalid response: {0}")]
+	OidcInvalidResponse(String),
+	#[error("This sign-in attempt has expired or was already completed")]
+	OidcLoginExpired,
+	#[error("User `{0}` is not allowed to sign in")]
+	OidcAccessDenied(String),
 
 	#[error("Could not deserialize configuration: `{0}`")]
 	ConfigDeserialization(toml::de::Error),
@@ -168,6 +181,7 @@ pub struct App {
 	pub scanner: scanner::Scanner,
 	pub index_manager: index::Manager,
 	pub config_manager: config::Manager,
+	pub oidc_manager: oidc::Manager,
 	pub peaks_manager: peaks::Manager,
 	pub playlist_manager: playlist::Manager,
 	pub thumbnail_manager: thumbnail::Manager,
@@ -194,6 +208,7 @@ impl App {
 
 		let config_manager = config::Manager::new(&paths.config_file_path, auth_secret).await?;
 		let ddns_manager = ddns::Manager::new(config_manager.clone());
+		let oidc_manager = oidc::Manager::new(config_manager.clone());
 		let ndb_manager = ndb::Manager::new(&paths.data_dir_path)?;
 		let index_manager = index::Manager::new(&paths.data_dir_path).await?;
 		let scanner = scanner::Scanner::new(index_manager.clone(), config_manager.clone()).await?;
@@ -218,6 +233,7 @@ impl App {
 			scanner,
 			index_manager,
 			config_manager,
+			oidc_manager,
 			peaks_manager,
 			playlist_manager,
 			thumbnail_manager,

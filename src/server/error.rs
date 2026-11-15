@@ -81,6 +81,14 @@ pub enum APIError {
 	ThumbnailFlacDecoding(PathBuf, metaflac::Error),
 	#[error("Thumbnail file could not be opened")]
 	ThumbnailFileIO,
+	#[error("Unknown single sign-on provider")]
+	OidcProviderNotFound,
+	#[error("The single sign-on provider could not be reached or returned an invalid response")]
+	OidcProviderFailure,
+	#[error("This sign-in attempt has expired or was already completed")]
+	OidcLoginExpired,
+	#[error("Your account is not allowed to use this server")]
+	OidcAccessDenied,
 	#[error("Audio transcoding is not available on this server")]
 	TranscodingUnavailable,
 	#[error("Could not transcode audio file: {0}")]
@@ -125,6 +133,12 @@ impl From<app::Error> for APIError {
 			app::Error::UnsupportedFormat(f) => APIError::UnsupportedThumbnailFormat(f),
 
 			app::Error::MediaEmpty(p) => APIError::AudioEmpty(p),
+			app::Error::OidcProviderInvalid(_, _) => APIError::Internal,
+			app::Error::OidcProviderNotFound => APIError::OidcProviderNotFound,
+			app::Error::OidcProviderUnreachable(_) => APIError::OidcProviderFailure,
+			app::Error::OidcInvalidResponse(_) => APIError::OidcProviderFailure,
+			app::Error::OidcLoginExpired => APIError::OidcLoginExpired,
+			app::Error::OidcAccessDenied(_) => APIError::OidcAccessDenied,
 			app::Error::TranscodingUnavailable => APIError::TranscodingUnavailable,
 			app::Error::Transcoding(p) => APIError::TranscodingFailed(p),
 			app::Error::MediaDecode(e) => APIError::AudioDecoding(e),

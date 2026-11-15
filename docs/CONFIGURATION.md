@@ -54,3 +54,5 @@ admin = true
 initial_password = "amospheric-strawberry64"
 ```
 
+Single sign-on providers are also declared in this file, see the [single sign-on documentation](SSO.md).
+

@@ -15,6 +15,7 @@ mod auth;
 mod error;
 mod logger;
 mod media;
+mod oidc;
 mod subsonic;
 mod version;
 
@@ -84,6 +85,12 @@ impl FromRef<App> for app::peaks::Manager {
 impl FromRef<App> for app::playlist::Manager {
 	fn from_ref(app: &App) -> Self {
 		app.playlist_manager.clone()
+	}
+}
+
+impl FromRef<App> for app::oidc::Manager {
+	fn from_ref(app: &App) -> Self {
+		app.oidc_manager.clone()
 	}
 }
 

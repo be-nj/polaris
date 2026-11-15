@@ -49,6 +49,7 @@ The goals of this project are:
 - 🔧 [Configuration](docs/CONFIGURATION.md)
 - 📻 [Using Subsonic clients](docs/SUBSONIC.md)
 - 🎚️ [Transcoding](docs/TRANSCODING.md)
+- 🔑 [Single sign-on](docs/SSO.md)
 - 👷 [Contribute to Polaris](CONTRIBUTING.md)
 - 🛟 [Maintenance Runbooks](docs/MAINTENANCE.md)
 

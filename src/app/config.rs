@@ -9,16 +9,19 @@ use notify_debouncer_full::{
 	notify::{event::ModifyKind, EventKind, RecommendedWatcher, RecursiveMode},
 	DebounceEventResult, DebouncedEvent, Debouncer, RecommendedCache,
 };
+use rand::{rngs::OsRng, RngCore};
 use regex::Regex;
 use tokio::sync::{futures::Notified, Notify, RwLock};
 
 use crate::app::Error;
 
 mod mounts;
+mod oidc;
 pub mod storage;
 mod user;
 
 pub use mounts::*;
+pub use oidc::*;
 pub use user::*;
 
 use super::{auth, transcode};
@@ -33,6 +36,8 @@ pub struct Config {
 	pub ddns_update_url: Option<http::Uri>,
 	pub mount_dirs: Vec<MountDir>,
 	pub users: Vec<User>,
+	pub public_url: Option<String>,
+	pub oidc_providers: Vec<OidcProvider>,
 }
 
 impl TryFrom<storage::Config> for Config {
@@ -57,6 +62,25 @@ impl TryFrom<storage::Config> for Config {
 
 		config.transcode_cache_size_mb = c.transcode_cache_size_mb;
 
+		config.public_url = c
+			.public_url
+			.map(|u| u.trim().trim_end_matches('/').to_owned())
+			.filter(|u| !u.is_empty());
+		for provider in c.oidc_providers {
+			let provider = OidcProvider::try_from(provider)?;
+			if config
+				.oidc_providers
+				.iter()
+				.any(|p| p.name == provider.name)
+			{
+				return Err(Error::OidcProviderInvalid(
+					provider.name,
+					"`name` must be unique".to_owned(),
+				));
+			}
+			config.oidc_providers.push(provider);
+		}
+
 		config.ddns_update_url = match c.ddns_update_url.map(http::Uri::try_from) {
 			Some(Ok(u)) => Some(u),
 			Some(Err(_)) => return Err(Error::DDNSUpdateURLInvalid),
@@ -76,6 +100,8 @@ impl From<Config> for storage::Config {
 			mount_dirs: c.mount_dirs.into_iter().map(|d| d.into()).collect(),
 			ddns_update_url: c.ddns_update_url.map(|u| u.to_string()),
 			users: c.users.into_iter().map(|u| u.into()).collect(),
+			public_url: c.public_url,
+			oidc_providers: c.oidc_providers.into_iter().map(|p| p.into()).collect(),
 		}
 	}
 }
@@ -284,6 +310,62 @@ impl Manager {
 	pub async fn login(&self, username: &str, password: &str) -> Result<auth::Token, Error> {
 		let config = self.config.read().await;
 		config.login(username, password, &self.auth_secret)
+	}
+
+	/// Signs in a user whose identity was established by an external identity provider.
+	/// The user is created if needed. When `is_admin` is specified, the administrator
+	/// status of the user is updated accordingly.
+	pub async fn login_external(
+		&self,
+		username: &str,
+		is_admin: Option<bool>,
+	) -> Result<(auth::Token, bool), Error> {
+		let needs_update = {
+			let config = self.config.read().await;
+			match config.get_user(username) {
+				None => true,
+				Some(user) => is_admin.is_some_and(|a| a != user.is_admin()),
+			}
+		};
+
+		if needs_update {
+			self.mutate_fallible(|c| {
+				if !c.exists(username) {
+					// These users never sign in with a password. A random one satisfies
+					// the requirement for every user to have a password.
+					let mut password = [0u8; 32];
+					OsRng.fill_bytes(&mut password);
+					let password = password
+						.iter()
+						.map(|b| format!("{b:02x}"))
+						.collect::<String>();
+					c.create_user(username, &password, false)?;
+				}
+				if let Some(is_admin) = is_admin {
+					c.set_is_admin(username, is_admin)?;
+				}
+				Ok(())
+			})
+			.await?;
+		}
+
+		let config = self.config.read().await;
+		let user = config.get_user(username).ok_or(Error::UserNotFound)?;
+		let token = config.issue_token(username, &self.auth_secret)?;
+		Ok((token, user.is_admin()))
+	}
+
+	#[cfg(test)]
+	pub async fn get_config(&self) -> Config {
+		self.config.read().await.clone()
+	}
+
+	pub async fn get_public_url(&self) -> Option<String> {
+		self.config.read().await.public_url.clone()
+	}
+
+	pub async fn get_oidc_providers(&self) -> Vec<OidcProvider> {
+		self.config.read().await.oidc_providers.clone()
 	}
 
 	pub async fn set_is_admin(&self, username: &str, is_admin: bool) -> Result<(), Error> {

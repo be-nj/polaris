@@ -25,9 +25,12 @@ use crate::{
 
 use super::auth::{AdminRights, Auth};
 use super::media;
+use super::oidc;
 
 pub fn router() -> OpenApiRouter<App> {
 	OpenApiRouter::new()
+		// Single sign-on
+		.merge(oidc::router())
 		// Configuration
 		.routes(routes!(get_version))
 		.routes(routes!(get_initial_setup))
