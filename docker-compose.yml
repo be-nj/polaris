@@ -1,28 +1,34 @@
 # Runs Polaris with Docker Compose. See docs/DOCKER.md for details.
 #
-#   1. Set the location of your music collection below
+#   1. Set the location of your music collection below (look for `/path/to/your/music`)
 #   2. Run `docker compose up -d`
-#   3. Open http://localhost:5050 and follow the setup instructions
+#   3. Open http://localhost:5050 and follow the setup instructions,
+#      entering `/music` as the location of your music
+#
+# The image is downloaded if it has been published, and is otherwise built from the source
+# code next to this file (which takes several minutes the first time).
 
 services:
   polaris:
     image: ghcr.io/be-nj/polaris:latest
-    # To build the image from the source code in this folder instead of downloading it,
-    # comment out `image` above and uncomment the following line:
-    # build: .
+    build: .
     container_name: polaris
     restart: unless-stopped
     ports:
       - "5050:5050"
     environment:
-      # User and group Polaris runs as. Files it creates in the folders below belong to them.
-      # Run `id` to find yours.
+      # User and group Polaris runs as. Files it creates in the folders below belong to them,
+      # and they must be allowed to read your music. Run `id` to find yours.
       PUID: 1000
       PGID: 1000
+      # Uncomment to see more details in `docker compose logs polaris`
+      # (eg. while setting up single sign-on):
+      # POLARIS_LOG_LEVEL: debug
     volumes:
-      # Your music collection. Add it in the Polaris settings as `/music`.
+      # Your music collection
       - /path/to/your/music:/music:ro
-      # Configuration file (polaris.toml)
+      # Configuration file (polaris.toml). Single sign-on providers are declared there,
+      # see docs/SSO.md.
       - ./config:/config
       # Playlists and collection index
       - ./data:/data

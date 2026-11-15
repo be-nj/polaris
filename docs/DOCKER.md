@@ -4,8 +4,14 @@ The Polaris Docker image contains everything needed to run Polaris: the server, 
 
 ## Quick start
 
-1. Download [`docker-compose.yml`](../docker-compose.yml) into an empty folder.
-2. Edit it to replace `/path/to/your/music` with the location of your music collection.
+1. Get the source code of this repository, which contains [`docker-compose.yml`](../docker-compose.yml):
+
+   ```bash
+   git clone https://github.com/be-nj/polaris.git
+   cd polaris
+   ```
+
+2. Edit `docker-compose.yml` to replace `/path/to/your/music` with the location of your music collection.
 3. Start Polaris:
 
    ```bash
@@ -13,6 +19,8 @@ The Polaris Docker image contains everything needed to run Polaris: the server, 
    ```
 
 4. Open [http://localhost:5050](http://localhost:5050) in a web browser. On first launch, Polaris asks where your music is and which user to create. Enter `/music` as the location of your music.
+
+Docker Compose downloads the image `ghcr.io/be-nj/polaris:latest` if it is available to you, and otherwise builds it from the source code, which takes several minutes the first time. Once the image has been published, `docker-compose.yml` is the only file you need: you can copy it anywhere and remove its `build: .` line.
 
 Polaris stores its files in three folders next to `docker-compose.yml`:
 
@@ -24,9 +32,18 @@ Polaris stores its files in three folders next to `docker-compose.yml`:
 
 ## Updating
 
+When using the published image:
+
 ```bash
 docker compose pull
 docker compose up -d
+```
+
+When building the image yourself:
+
+```bash
+git pull
+docker compose up -d --build
 ```
 
 ## File permissions
@@ -39,7 +56,8 @@ The container starts as `root` to prepare these folders, then switches to this u
 
 - **Port**: change the left-hand side of `"5050:5050"` to serve Polaris on another port.
 - **Several music folders**: add one volume per folder (eg. `/mnt/disk2/music:/music2:ro`) and add each one in the Polaris settings.
-- **Command line options**: anything set as `command` is passed to Polaris, for example `command: ["--log-level", "debug"]`.
+- **Log verbosity**: set the `POLARIS_LOG_LEVEL` environment variable to `debug` to get more details from `docker compose logs polaris`.
+- **Command line options**: anything set as `command` is passed on to Polaris.
 - **Single sign-on**: declare your identity provider in `./config/polaris.toml` as described in the [single sign-on documentation](SSO.md). The login page of the web client bundled in the image then offers a button for each provider.
 
 ## Using Polaris behind a reverse proxy

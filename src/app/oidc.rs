@@ -374,7 +374,8 @@ fn fetch_claims(
 	let id_token = token_response
 		.id_token
 		.ok_or_else(|| Error::OidcInvalidResponse("no ID token was issued".to_owned()))?;
-	let mut claims = decode_id_token(&id_token).map_err(Error::OidcInvalidResponse)?;
+	let mut claims = decode_jwt_claims(&id_token)
+		.map_err(|e| Error::OidcInvalidResponse(format!("invalid ID token: {e}")))?;
 	let now = SystemTime::now()
 		.duration_since(UNIX_EPOCH)
 		.unwrap_or_default()
@@ -409,31 +410,47 @@ fn fetch_claims(
 		}
 	}
 
+	// Some providers (notably Keycloak, for roles) only describe parts of the user in the
+	// access token. Access tokens are opaque as far as OpenID Connect is concerned, but in
+	// practice they are often JWTs. Like the ID token, they were received straight from
+	// the provider.
+	let access_token_claims = token_response
+		.access_token
+		.as_deref()
+		.and_then(|token| decode_jwt_claims(token).ok());
+	if let (Some(claims), Some(Value::Object(access_token_claims))) =
+		(claims.as_object_mut(), access_token_claims)
+	{
+		for (name, value) in access_token_claims {
+			claims.entry(name).or_insert(value);
+		}
+	}
+
 	Ok(claims)
 }
 
-/// Reads the claims of an ID token.
+/// Reads the claims of a JWT, such as an ID token.
 ///
 /// The signature of the token is intentionally not verified. Tokens are only ever received
 /// directly from the token endpoint of the provider, in which case the OpenID Connect
 /// specification (Core 1.0, section 3.1.3.7) allows relying on the TLS connection to
 /// authenticate the issuer.
-fn decode_id_token(id_token: &str) -> Result<Value, String> {
-	let mut segments = id_token.split('.');
+fn decode_jwt_claims(token: &str) -> Result<Value, String> {
+	let mut segments = token.split('.');
 	let (Some(_header), Some(payload), Some(_signature), None) = (
 		segments.next(),
 		segments.next(),
 		segments.next(),
 		segments.next(),
 	) else {
-		return Err("the ID token is not a signed JWT".to_owned());
+		return Err("the token is not a signed JWT".to_owned());
 	};
 	let payload = URL_SAFE_NO_PAD
 		.decode(payload.trim_end_matches('='))
-		.map_err(|_| "the ID token is not valid base64".to_owned())?;
+		.map_err(|_| "the token is not valid base64".to_owned())?;
 	match serde_json::from_slice::<Value>(&payload) {
 		Ok(claims) if claims.is_object() => Ok(claims),
-		_ => Err("the ID token does not contain claims".to_owned()),
+		_ => Err("the token does not contain claims".to_owned()),
 	}
 }
 
@@ -537,6 +554,7 @@ pub mod mock {
 		user_claims: Map<String, Value>,
 		id_token_overrides: Map<String, Value>,
 		claims_in_id_token: bool,
+		access_token_claims: Option<Value>,
 		expects_client_secret_post: bool,
 		grants: HashMap<String, Grant>,
 		access_tokens: Vec<String>,
@@ -602,6 +620,11 @@ pub mod mock {
 		/// Whether user claims are part of ID tokens, or only available from UserInfo.
 		pub fn include_claims_in_id_token(&self, include: bool) {
 			self.inner.lock().unwrap().claims_in_id_token = include;
+		}
+
+		/// Makes the provider issue JWT access tokens carrying the specified claims.
+		pub fn set_access_token_claims(&self, claims: Value) {
+			self.inner.lock().unwrap().access_token_claims = Some(claims);
 		}
 
 		pub fn expect_client_secret_post(&self) {
@@ -718,7 +741,15 @@ pub mod mock {
 			URL_SAFE_NO_PAD.encode("signature")
 		);
 
-		let access_token = format!("access-token-for-{code}");
+		let access_token = match &inner.access_token_claims {
+			Some(claims) => format!(
+				"{}.{}.{}",
+				encode(&json!({ "alg": "RS256", "typ": "JWT" })),
+				encode(claims),
+				URL_SAFE_NO_PAD.encode(format!("signature-for-{code}"))
+			),
+			None => format!("access-token-for-{code}"),
+		};
 		inner.access_tokens.push(access_token.clone());
 
 		Ok(Json(json!({
@@ -920,6 +951,31 @@ mod test {
 	}
 
 	#[tokio::test]
+	async fn reads_roles_from_access_token() {
+		// By default, Keycloak only lists roles in its access tokens
+		let ctx = Context::new(test_name!(), |p| {
+			p.role_claim = Some("realm_access.roles".to_owned());
+			p.allowed_roles = vec!["polaris-users".to_owned()];
+			p.admin_roles = vec!["polaris-admins".to_owned()];
+		})
+		.await;
+		ctx.provider.set_access_token_claims(json!({
+			"preferred_username": "not-alice",
+			"realm_access": { "roles": ["polaris-users", "polaris-admins"] },
+		}));
+
+		let login = ctx.login().await.unwrap();
+		// Claims of the ID token and UserInfo take precedence
+		assert_eq!(login.username, "alice");
+		assert!(login.is_admin);
+
+		ctx.provider.set_access_token_claims(json!({
+			"realm_access": { "roles": ["other"] },
+		}));
+		assert!(matches!(ctx.login().await, Err(Error::OidcAccessDenied(_))));
+	}
+
+	#[tokio::test]
 	async fn requires_username_claim() {
 		let ctx = Context::new(test_name!(), |_| ()).await;
 		ctx.provider.set_user_claims(json!({ "sub": "1234" }));
@@ -1063,13 +1119,13 @@ mod test {
 	}
 
 	#[test]
-	fn decodes_id_tokens() {
+	fn decodes_jwt_claims() {
 		let encode = |s: &str| URL_SAFE_NO_PAD.encode(s);
 		let token = format!("{}.{}.sig", encode("{}"), encode(r#"{"sub":"1"}"#));
-		assert_eq!(decode_id_token(&token).unwrap(), json!({ "sub": "1" }));
-		assert!(decode_id_token("not-a-jwt").is_err());
-		assert!(decode_id_token("a.b").is_err());
-		assert!(decode_id_token("a.b.c.d").is_err());
-		assert!(decode_id_token(&format!("a.{}.c", encode("[1]"))).is_err());
+		assert_eq!(decode_jwt_claims(&token).unwrap(), json!({ "sub": "1" }));
+		assert!(decode_jwt_claims("not-a-jwt").is_err());
+		assert!(decode_jwt_claims("a.b").is_err());
+		assert!(decode_jwt_claims("a.b.c.d").is_err());
+		assert!(decode_jwt_claims(&format!("a.{}.c", encode("[1]"))).is_err());
 	}
 }

@@ -33,7 +33,7 @@ RUN set -eu; \
 	esac; \
 	if [ "${TARGETARCH}" != "${BUILDARCH}" ]; then \
 		apt-get update; \
-		apt-get install -y --no-install-recommends "${cross_gcc}"; \
+		apt-get install -y --no-install-recommends "${cross_gcc}" "libc6-dev-${TARGETARCH}-cross"; \
 		rm -rf /var/lib/apt/lists/*; \
 	fi; \
 	rustup target add "${rust_target}"; \

@@ -599,8 +599,17 @@ async fn limits_stream_bitrate() {
 	let can_transcode = response.body().available;
 	service.logout().await;
 
+	// Waits for the collection to reflect the new mount directory
 	let params = [("query", ""), ("songCount", "500")];
-	let response = call(&mut service, "search3", &params).await;
+	let mut response = call(&mut service, "search3", &params).await;
+	for _ in 0..100 {
+		let songs = response["searchResult3"]["song"].as_array().unwrap();
+		if songs.iter().any(|s| s["suffix"] == "flac") {
+			break;
+		}
+		tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+		response = call(&mut service, "search3", &params).await;
+	}
 	let songs = &response["searchResult3"]["song"];
 	let flac_id = find(songs, "suffix", "flac")["id"].as_str().unwrap();
 	let mp3_id = find(songs, "suffix", "mp3")["id"].as_str().unwrap();
