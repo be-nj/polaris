@@ -19,6 +19,7 @@ mod media;
 mod playlist;
 mod search;
 mod settings;
+mod subsonic;
 mod user;
 mod web;
 

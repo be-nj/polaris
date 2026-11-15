@@ -212,6 +212,24 @@ impl Collection {
 		genres
 	}
 
+	/// Returns the name, number of albums and number of songs of every genre.
+	pub fn get_genre_counts(&self, dictionary: &Dictionary) -> Vec<(String, usize, usize)> {
+		let mut genres = self
+			.genres
+			.values()
+			.map(|g| {
+				(
+					dictionary.resolve(&g.name).to_string(),
+					g.albums.len(),
+					g.songs.len(),
+				)
+			})
+			.collect::<Vec<_>>();
+		let collator = dictionary::make_collator();
+		genres.sort_by(|a, b| collator.compare(&a.0, &b.0));
+		genres
+	}
+
 	pub fn get_genre(&self, dictionary: &Dictionary, genre_key: GenreKey) -> Option<Genre> {
 		self.genres.get(&genre_key).map(|genre| {
 			let collator = dictionary::make_collator();

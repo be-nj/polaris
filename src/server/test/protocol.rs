@@ -365,3 +365,29 @@ pub fn import_playlists(files: HashMap<String, Vec<u8>>) -> Request<Vec<u8>> {
 fn url_encode(input: &str) -> String {
 	percent_encode(input.as_bytes(), NON_ALPHANUMERIC).to_string()
 }
+
+fn subsonic_query(params: &[(&str, &str)]) -> String {
+	form_urlencoded::Serializer::new(String::new())
+		.extend_pairs(params)
+		.finish()
+}
+
+pub fn subsonic(endpoint: &str, params: &[(&str, &str)]) -> Request<()> {
+	Request::builder()
+		.method(Method::GET)
+		.uri(format!("/rest/{endpoint}?{}", subsonic_query(params)))
+		.body(())
+		.unwrap()
+}
+
+pub fn subsonic_form_post(endpoint: &str, params: &[(&str, &str)]) -> Request<Vec<u8>> {
+	Request::builder()
+		.method(Method::POST)
+		.uri(format!("/rest/{endpoint}"))
+		.header(
+			http::header::CONTENT_TYPE,
+			"application/x-www-form-urlencoded",
+		)
+		.body(subsonic_query(params).into_bytes())
+		.unwrap()
+}

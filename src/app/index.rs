@@ -229,6 +229,44 @@ impl Manager {
 		.unwrap()
 	}
 
+	/// Looks up several albums at once. Albums that cannot be found are omitted from the result.
+	pub async fn get_albums_by_key(&self, keys: Vec<(Vec<String>, String)>) -> Vec<Album> {
+		spawn_blocking({
+			let index_manager = self.clone();
+			move || {
+				let index = index_manager.index.read().unwrap();
+				keys.into_iter()
+					.filter_map(|(artists, name)| {
+						let name = index.dictionary.get(&name)?;
+						let album_key = AlbumKey {
+							artists: artists
+								.into_iter()
+								.filter_map(|a| index.dictionary.get(a))
+								.map(ArtistKey)
+								.collect(),
+							name,
+						};
+						index.collection.get_album(&index.dictionary, album_key)
+					})
+					.collect()
+			}
+		})
+		.await
+		.unwrap()
+	}
+
+	pub async fn get_genre_counts(&self) -> Vec<(String, usize, usize)> {
+		spawn_blocking({
+			let index_manager = self.clone();
+			move || {
+				let index = index_manager.index.read().unwrap();
+				index.collection.get_genre_counts(&index.dictionary)
+			}
+		})
+		.await
+		.unwrap()
+	}
+
 	pub async fn get_random_albums(
 		&self,
 		seed: Option<u64>,

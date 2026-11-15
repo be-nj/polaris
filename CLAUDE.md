@@ -74,6 +74,10 @@ All endpoints are in `axum/api.rs`, each annotated with `#[utoipa::path]` and re
 - Handlers return `Result<_, APIError>`. `app::Error` converts into `APIError` (`server/error.rs`), and `axum/error.rs` maps each `APIError` variant to a status code, so a new `app::Error` variant needs handling in both.
 - Domain types are never serialized directly; convert to and from the `dto` types.
 
+### Subsonic API
+
+`src/server/axum/subsonic.rs` implements the Subsonic REST API under `/rest/{method}` (documented for users in `docs/SUBSONIC.md`). It is a plain axum router outside of the OpenAPI document, with a single handler which parses parameters from the query string or a form body, authenticates, then dispatches on the method name. Endpoints build `serde_json` values; `subsonic/response.rs` wraps them in the response envelope and renders JSON or XML (XML is derived mechanically from the JSON shape). `subsonic/id.rs` derives the opaque string IDs Subsonic requires from names and virtual paths, and `subsonic/model.rs` converts index types into Subsonic entities. Subsonic errors are reported inside the envelope with HTTP status 200. Tests are in `src/server/test/subsonic.rs`.
+
 ## Tests
 
 Tests are inline `#[cfg(test)]` modules next to the code, plus shared harnesses:
