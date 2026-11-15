@@ -222,6 +222,8 @@ fn read_vorbis<P: AsRef<Path>>(path: P) -> Result<SongMetadata, Error> {
 				"COMPOSER" => metadata.composers.push(value),
 				"GENRE" => metadata.genres.push(value),
 				"PUBLISHER" => metadata.labels.push(value),
+				"METADATA_BLOCK_PICTURE" => metadata.has_artwork = true,
+				"COVERART" => metadata.has_artwork = true,
 				_ => (),
 			}
 		}
@@ -248,6 +250,8 @@ fn read_opus<P: AsRef<Path>>(path: P) -> Result<SongMetadata, Error> {
 				"COMPOSER" => metadata.composers.push(value),
 				"GENRE" => metadata.genres.push(value),
 				"PUBLISHER" => metadata.labels.push(value),
+				"METADATA_BLOCK_PICTURE" => metadata.has_artwork = true,
+				"COVERART" => metadata.has_artwork = true,
 				_ => (),
 			}
 		}
@@ -401,6 +405,27 @@ fn reads_embedded_artwork() {
 			.unwrap()
 			.has_artwork
 	);
+	assert!(
+		read_metadata(Path::new("test-data/artwork/sample.ogg"))
+			.unwrap()
+			.has_artwork
+	);
+	assert!(
+		read_metadata(Path::new("test-data/artwork/sample.opus"))
+			.unwrap()
+			.has_artwork
+	);
+}
+
+#[test]
+fn reads_absence_of_embedded_artwork() {
+	for extension in ["aif", "flac", "m4a", "mp3", "ogg", "opus", "wav"] {
+		let path = format!("test-data/formats/sample.{extension}");
+		assert!(
+			!read_metadata(Path::new(&path)).unwrap().has_artwork,
+			"{path}"
+		);
+	}
 }
 
 #[test]

@@ -15,8 +15,9 @@ The location of the configuration file is always logged during Polaris startup. 
 The configuration file uses the [TOML](https://toml.io/) format. Everything in the configuration file is optional and may be omitted (unless mentioned otherwise).
 
 ```toml
-# Regular expression used to identify album art in files adjacent to an audio file
-album_art_pattern = "Folder.(jpeg|jpg|png)"
+# Regular expression matched (case-insensitively) against the name of files next to audio files, to find album art.
+# Defaults to "^(folder|cover|front|album)\\.(jpeg|jpg|png)$". See "Album art" below.
+album_art_pattern = "^(folder|cover)\\.(jpeg|jpg|png)$"
 # Regular expression matched (case-insensitively) against the name of each file and directory found while scanning.
 # Matching entries are skipped, along with everything inside matching directories.
 # Defaults to "^\\." which skips hidden files and directories. Set to "" to index everything.
@@ -56,3 +57,12 @@ initial_password = "amospheric-strawberry64"
 
 Single sign-on providers are also declared in this file, see the [single sign-on documentation](SSO.md).
 
+## Album art
+
+Polaris looks for the album art of each song in this order:
+
+1. A picture embedded in the audio file. This is supported for `mp3`, `flac`, `m4a`, `ogg` (Vorbis), `opus`, `aiff` and `wav` files.
+2. An image in the same directory as the song, whose name matches `album_art_pattern`. By default, these are `folder`, `cover`, `front` or `album` with a `jpg`, `jpeg` or `png` extension, in any letter case. When several images match, the first one in alphabetical order is used.
+3. For songs in a directory holding one disc of an album (a name such as `CD1`, `Disc 2` or `disc_3 - Live`), an image matching `album_art_pattern` in the directory above.
+
+Polaris does not download album art, and does not use images found anywhere else. Changes to `album_art_pattern` take effect with the next scan of the collection, which starts automatically.

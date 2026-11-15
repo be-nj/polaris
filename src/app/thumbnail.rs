@@ -3,6 +3,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, GenericImage, GenericImageView, ImageBuffer};
 use tokio::task::spawn_blocking;
@@ -209,12 +210,61 @@ fn read_mp4(path: &Path) -> Result<DynamicImage, Error> {
 		.and_then(|d| image::load_from_memory(d.data).map_err(|e| Error::Image(path.to_owned(), e)))
 }
 
-fn read_vorbis(_: &Path) -> Result<DynamicImage, Error> {
-	Err(Error::UnsupportedFormat("vorbis"))
+fn read_vorbis(path: &Path) -> Result<DynamicImage, Error> {
+	let file = std::fs::File::open(path).map_err(|e| Error::Io(path.to_owned(), e))?;
+	let source = lewton::inside_ogg::OggStreamReader::new(file)?;
+	read_vorbis_comments(path, &source.comment_hdr.comment_list)
 }
 
-fn read_opus(_: &Path) -> Result<DynamicImage, Error> {
-	Err(Error::UnsupportedFormat("opus"))
+fn read_opus(path: &Path) -> Result<DynamicImage, Error> {
+	let headers = opus_headers::parse_from_path(path)?;
+	read_vorbis_comments(path, &headers.comments.user_comments)
+}
+
+/// Ogg files (Vorbis and Opus) store pictures in their comments. The standard way is a
+/// `METADATA_BLOCK_PICTURE` comment, which holds the same structure as picture blocks of FLAC
+/// files, encoded as base64. `COVERART` is an older convention holding only the image.
+fn read_vorbis_comments(path: &Path, comments: &[(String, String)]) -> Result<DynamicImage, Error> {
+	fn find_comment<'a>(
+		comments: &'a [(String, String)],
+		name: &'a str,
+	) -> impl Iterator<Item = Vec<u8>> + 'a {
+		comments
+			.iter()
+			.filter(move |(key, _)| key.eq_ignore_ascii_case(name))
+			.filter_map(|(_, value)| BASE64.decode(value.trim()).ok())
+	}
+
+	let pictures = find_comment(comments, "METADATA_BLOCK_PICTURE")
+		.filter_map(|block| read_flac_picture_block(&block).map(<[u8]>::to_vec));
+	let legacy_pictures = find_comment(comments, "COVERART");
+
+	pictures
+		.chain(legacy_pictures)
+		.find_map(|data| image::load_from_memory(&data).ok())
+		.ok_or_else(|| Error::EmbeddedArtworkNotFound(path.to_owned()))
+}
+
+/// Extracts the image from a FLAC picture block: picture type, MIME type, description,
+/// dimensions, color depth, number of colors, then the image itself. Numbers are 32-bit
+/// big-endian, and texts and image are preceded by their length.
+fn read_flac_picture_block(block: &[u8]) -> Option<&[u8]> {
+	fn read_u32(block: &[u8], offset: usize) -> Option<usize> {
+		let bytes = block.get(offset..offset.checked_add(4)?)?;
+		Some(u32::from_be_bytes(bytes.try_into().ok()?) as usize)
+	}
+
+	let mime_length = read_u32(block, 4)?;
+	let description_offset = 8usize.checked_add(mime_length)?;
+	let description_length = read_u32(block, description_offset)?;
+	// Skips the description, and four numbers describing the image
+	let data_offset = description_offset
+		.checked_add(4)?
+		.checked_add(description_length)?
+		.checked_add(16)?;
+	let data_length = read_u32(block, data_offset)?;
+	let data_start = data_offset.checked_add(4)?;
+	block.get(data_start..data_start.checked_add(data_length)?)
 }
 
 #[cfg(test)]
@@ -262,18 +312,131 @@ mod test {
 		assert_eq!(m4a_img, embedded_img);
 
 		let ogg_img = read(Path::new("test-data/artwork/sample.ogg"))
-			.map(|d| d.to_rgb8())
-			.ok();
-		assert_eq!(ogg_img, None);
+			.unwrap()
+			.to_rgb8();
+		assert_eq!(ogg_img, embedded_img);
 
 		let opus_img = read(Path::new("test-data/artwork/sample.opus"))
-			.map(|d| d.to_rgb8())
-			.ok();
-		assert_eq!(opus_img, None);
+			.unwrap()
+			.to_rgb8();
+		assert_eq!(opus_img, embedded_img);
 
 		let wave_img = read(Path::new("test-data/artwork/sample.wav"))
 			.unwrap()
 			.to_rgb8();
 		assert_eq!(wave_img, embedded_img);
+	}
+
+	#[test]
+	fn can_read_large_artwork_in_ogg_files() {
+		// Album art of real-world size spans several Ogg pages (about 64 kB each)
+		for path in [
+			"test-data/artwork/large.ogg",
+			"test-data/artwork/large.opus",
+		] {
+			let path = Path::new(path);
+			let metadata = crate::app::formats::read_metadata(path).unwrap();
+			assert!(metadata.has_artwork, "{path:?}");
+			assert_eq!(metadata.title.as_deref(), Some("TEST TITLE"), "{path:?}");
+			let image = read(path).unwrap();
+			assert_eq!((image.width(), image.height()), (600, 600), "{path:?}");
+		}
+	}
+
+	#[test]
+	fn ogg_files_without_artwork_have_no_thumbnail() {
+		for path in [
+			"test-data/formats/sample.ogg",
+			"test-data/formats/sample.opus",
+		] {
+			let result = read(Path::new(path));
+			assert!(
+				matches!(result, Err(Error::EmbeddedArtworkNotFound(_))),
+				"{path}"
+			);
+		}
+	}
+
+	fn make_picture_block(mime: &str, description: &str, data: &[u8]) -> Vec<u8> {
+		let mut block = vec![];
+		block.extend(3u32.to_be_bytes());
+		block.extend((mime.len() as u32).to_be_bytes());
+		block.extend(mime.as_bytes());
+		block.extend((description.len() as u32).to_be_bytes());
+		block.extend(description.as_bytes());
+		for number in [4u32, 4, 24, 0] {
+			block.extend(number.to_be_bytes());
+		}
+		block.extend((data.len() as u32).to_be_bytes());
+		block.extend(data);
+		block
+	}
+
+	#[test]
+	fn reads_flac_picture_blocks() {
+		let block = make_picture_block("image/png", "", b"image");
+		assert_eq!(read_flac_picture_block(&block), Some(b"image".as_slice()));
+
+		let block = make_picture_block("image/jpeg", "Front cover ✨", b"image");
+		assert_eq!(read_flac_picture_block(&block), Some(b"image".as_slice()));
+
+		let block = make_picture_block("", "", b"");
+		assert_eq!(read_flac_picture_block(&block), Some(b"".as_slice()));
+	}
+
+	#[test]
+	fn rejects_malformed_flac_picture_blocks() {
+		let block = make_picture_block("image/png", "cover", b"image");
+		// Truncated anywhere
+		for length in 0..block.len() {
+			assert_eq!(read_flac_picture_block(&block[..length]), None, "{length}");
+		}
+
+		// Lengths pointing far outside of the block
+		for offset in [4, 8 + "image/png".len(), block.len() - b"image".len() - 4] {
+			let mut block = block.clone();
+			block[offset..offset + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+			assert_eq!(read_flac_picture_block(&block), None, "{offset}");
+		}
+	}
+
+	#[test]
+	fn reads_pictures_from_vorbis_comments() {
+		let path = Path::new("song.ogg");
+		let image = std::fs::read("test-data/artwork/Embedded.png").unwrap();
+		let expected = image::load_from_memory(&image).unwrap().to_rgb8();
+		let comment = |key: &str, value: &[u8]| (key.to_owned(), BASE64.encode(value));
+		let read = |comments: &[(String, String)]| {
+			read_vorbis_comments(path, comments)
+				.map(|i| i.to_rgb8())
+				.ok()
+		};
+
+		let block = make_picture_block("image/png", "", &image);
+		assert_eq!(
+			read(&[comment("metadata_block_picture", &block)]),
+			Some(expected.clone())
+		);
+		// Older convention, where the comment only holds the image
+		assert_eq!(read(&[comment("COVERART", &image)]), Some(expected.clone()));
+
+		// Pictures which cannot be read are skipped
+		let broken_block = make_picture_block("image/png", "", b"not an image");
+		let comments = [
+			("TITLE".to_owned(), "Song".to_owned()),
+			(
+				"METADATA_BLOCK_PICTURE".to_owned(),
+				"not base64!".to_owned(),
+			),
+			comment("METADATA_BLOCK_PICTURE", &broken_block),
+			comment("METADATA_BLOCK_PICTURE", &block),
+		];
+		assert_eq!(read(&comments), Some(expected));
+
+		assert_eq!(read(&[]), None);
+		assert_eq!(
+			read(&[comment("METADATA_BLOCK_PICTURE", &broken_block)]),
+			None
+		);
 	}
 }

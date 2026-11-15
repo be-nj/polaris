@@ -63,6 +63,8 @@ An index is never mutated in place. `index::Builder` accumulates `scanner::Direc
 
 `Scanner` runs two background tasks. One waits for a trigger (config change, filesystem change under a mount, or an explicit request), aborts any scan in progress, debounces for 2 seconds, then signals the other task, which runs `run_scan`. A scan traverses mounts on a rayon thread pool, streams results over channels into an `index::Builder`, persists the result and swaps it in. When the collection was empty at the start of the scan, partial indices are promoted every few seconds so a first-time scan of a large library becomes browsable progressively.
 
+The scan also decides the artwork of each song (`process_directory`): a picture embedded in the file, else an image of the same directory matching `album_art_pattern` (default in `config::DEFAULT_ALBUM_ART_PATTERN`), else that of the parent directory for disc directories (`DISC_DIRECTORY_REGEX`, eg. `CD1`). `thumbnail.rs` extracts embedded pictures per format; user docs are in `docs/CONFIGURATION.md`.
+
 Paths exposed through the API are *virtual paths*: the first component is a mount name, mapped to a real directory by `config::Manager::resolve_virtual_path` / `virtualize_path`. The index only stores virtual paths.
 
 ### HTTP server

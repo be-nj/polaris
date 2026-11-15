@@ -28,6 +28,11 @@ use super::{auth, transcode};
 
 pub const DEFAULT_SCAN_EXCLUDE_PATTERN: &str = r"^\.";
 
+/// File names album art is read from when the configuration does not specify any. These
+/// are the names commonly given to album art by music players, taggers and rippers.
+/// Matching is case insensitive.
+pub const DEFAULT_ALBUM_ART_PATTERN: &str = r"^(folder|cover|front|album)\.(jpeg|jpg|png)$";
+
 #[derive(Debug, Clone, Default)]
 pub struct Config {
 	pub album_art_pattern: Option<Regex>,
@@ -237,7 +242,7 @@ impl Manager {
 	pub async fn get_index_album_art_pattern(&self) -> Regex {
 		let config = self.config.read().await;
 		let pattern = config.album_art_pattern.clone();
-		pattern.unwrap_or_else(|| Regex::new("Folder.(jpeg|jpg|png)").unwrap())
+		pattern.unwrap_or_else(|| Regex::new(DEFAULT_ALBUM_ART_PATTERN).unwrap())
 	}
 
 	pub async fn set_index_album_art_pattern(&self, regex: Regex) -> Result<(), Error> {

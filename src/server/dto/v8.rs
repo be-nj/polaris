@@ -264,7 +264,7 @@ impl From<config::MountDir> for MountDir {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct NewSettings {
-	#[schema(examples("Folder.(jpeg|jpg|png)"))]
+	#[schema(examples(r"^(folder|cover|front|album)\.(jpeg|jpg|png)$"))]
 	pub album_art_pattern: Option<String>,
 	#[schema(examples("https://myddnsprovider.com?token=abcdef"))]
 	pub ddns_update_url: Option<String>,
@@ -276,7 +276,7 @@ pub struct NewSettings {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Settings {
-	#[schema(examples("Folder.(jpeg|jpg|png)"))]
+	#[schema(examples(r"^(folder|cover|front|album)\.(jpeg|jpg|png)$"))]
 	pub album_art_pattern: String,
 	#[schema(examples("https://myddnsprovider.com?token=abcdef"))]
 	pub ddns_update_url: String,

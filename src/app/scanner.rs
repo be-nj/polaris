@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::mpsc::{channel, Sender, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::SystemTime;
 use std::{cmp::min, time::Duration};
 use tokio::sync::mpsc::unbounded_channel;
@@ -18,6 +18,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 use crate::app::{config, formats, index, Error};
+use crate::utils;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Directory {
@@ -444,6 +445,7 @@ impl Scan {
 							songs_output.clone(),
 							artwork_regex.clone(),
 							exclude_regex.clone(),
+							None,
 						);
 					});
 				}
@@ -462,6 +464,7 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 	songs_output: Sender<Song>,
 	artwork_regex: Option<Regex>,
 	exclude_regex: Option<Regex>,
+	parent_artwork_file: Option<PathBuf>,
 ) {
 	let read_dir = match fs::read_dir(&real_path) {
 		Ok(read_dir) => read_dir,
@@ -475,8 +478,9 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 		}
 	};
 
-	let mut songs = vec![];
-	let mut artwork_file = None;
+	let mut directories = vec![];
+	let mut files = vec![];
+	let mut artwork_file: Option<PathBuf> = None;
 
 	for entry in read_dir {
 		let entry = match entry {
@@ -511,53 +515,83 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 		let entry_virtual_path = virtual_path.as_ref().join(&name);
 
 		if is_dir {
-			scope.spawn({
-				let directories_output = directories_output.clone();
-				let songs_output = songs_output.clone();
-				let artwork_regex = artwork_regex.clone();
-				let exclude_regex = exclude_regex.clone();
-				|scope| {
-					process_directory(
-						scope,
-						entry_real_path,
-						entry_virtual_path,
-						directories_output,
-						songs_output,
-						artwork_regex,
-						exclude_regex,
-					);
-				}
-			});
-		} else if let Some(metadata) = formats::read_metadata(&entry_real_path) {
-			songs.push(Song {
-				real_path: entry_real_path.clone(),
-				virtual_path: entry_virtual_path.clone(),
-				track_number: metadata.track_number.map(|n| n as i64),
-				disc_number: metadata.disc_number.map(|n| n as i64),
-				title: metadata.title,
-				artists: metadata.artists,
-				album_artists: metadata.album_artists,
-				year: metadata.year.map(|n| n as i64),
-				album: metadata.album,
-				artwork: metadata.has_artwork.then(|| entry_virtual_path.clone()),
-				duration: metadata.duration.map(|n| n as i64),
-				lyricists: metadata.lyricists,
-				composers: metadata.composers,
-				genres: metadata.genres,
-				labels: metadata.labels,
-				date_added: get_date_created(&entry_real_path).unwrap_or_default(),
-			});
-		} else if artwork_file.is_none()
-			&& artwork_regex
-				.as_ref()
-				.is_some_and(|r| r.is_match(name.to_str().unwrap_or_default()))
+			directories.push((entry_real_path, entry_virtual_path));
+		} else if utils::get_audio_format(&entry_real_path).is_some() {
+			files.push((entry_real_path, entry_virtual_path));
+		} else if artwork_regex
+			.as_ref()
+			.is_some_and(|r| r.is_match(name.to_str().unwrap_or_default()))
 		{
-			artwork_file = Some(entry_virtual_path);
+			// When several files qualify, the choice must not depend on the order the
+			// file system happens to list them in
+			let is_preferred = artwork_file
+				.as_ref()
+				.is_none_or(|current| compare_file_names(&entry_virtual_path, current).is_lt());
+			if is_preferred {
+				artwork_file = Some(entry_virtual_path);
+			}
 		}
 	}
 
-	for mut song in songs {
-		song.artwork = song.artwork.or_else(|| artwork_file.clone());
+	// Albums made of several discs commonly have one directory per disc, and their artwork
+	// next to these directories.
+	let is_disc_directory = virtual_path
+		.as_ref()
+		.file_name()
+		.and_then(|n| n.to_str())
+		.is_some_and(|n| DISC_DIRECTORY_REGEX.is_match(n));
+	let artwork_file = artwork_file.or(parent_artwork_file.filter(|_| is_disc_directory));
+
+	// Sub-directories are handed out before reading the songs of this directory, which is
+	// the slow part, so that other threads can get to work
+	for (directory_real_path, directory_virtual_path) in directories {
+		scope.spawn({
+			let directories_output = directories_output.clone();
+			let songs_output = songs_output.clone();
+			let artwork_regex = artwork_regex.clone();
+			let exclude_regex = exclude_regex.clone();
+			let artwork_file = artwork_file.clone();
+			|scope| {
+				process_directory(
+					scope,
+					directory_real_path,
+					directory_virtual_path,
+					directories_output,
+					songs_output,
+					artwork_regex,
+					exclude_regex,
+					artwork_file,
+				);
+			}
+		});
+	}
+
+	for (file_real_path, file_virtual_path) in files {
+		let Some(metadata) = formats::read_metadata(&file_real_path) else {
+			continue;
+		};
+		let artwork = match metadata.has_artwork {
+			true => Some(file_virtual_path.clone()),
+			false => artwork_file.clone(),
+		};
+		let song = Song {
+			date_added: get_date_created(&file_real_path).unwrap_or_default(),
+			real_path: file_real_path,
+			virtual_path: file_virtual_path,
+			track_number: metadata.track_number.map(|n| n as i64),
+			disc_number: metadata.disc_number.map(|n| n as i64),
+			title: metadata.title,
+			artists: metadata.artists,
+			album_artists: metadata.album_artists,
+			year: metadata.year.map(|n| n as i64),
+			album: metadata.album,
+			artwork,
+			duration: metadata.duration.map(|n| n as i64),
+			lyricists: metadata.lyricists,
+			composers: metadata.composers,
+			genres: metadata.genres,
+			labels: metadata.labels,
+		};
 		songs_output.send(song).ok();
 	}
 
@@ -566,6 +600,21 @@ fn process_directory<P: AsRef<Path>, Q: AsRef<Path>>(
 			virtual_path: virtual_path.as_ref().to_owned(),
 		})
 		.ok();
+}
+
+/// Names of directories holding one disc of an album, eg. `CD1`, `Disc 2` or `disc_3 (Live)`
+static DISC_DIRECTORY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+	Regex::new(r"(?i)^(cd|disc|disk|dvd|lp|vinyl)[ ._-]*\d{1,2}([^\p{L}\d]|$)").unwrap()
+});
+
+/// Orders file names without regard for case, so that `cover.jpg` and `Cover.jpg` are
+/// treated alike.
+fn compare_file_names(a: &Path, b: &Path) -> std::cmp::Ordering {
+	let key = |p: &Path| {
+		let name = p.file_name().unwrap_or_default().to_string_lossy();
+		(name.to_lowercase(), name.into_owned())
+	};
+	key(a).cmp(&key(b))
 }
 
 fn get_date_created<P: AsRef<Path>>(path: P) -> Option<i64> {
@@ -657,6 +706,240 @@ mod test {
 			songs
 				.iter()
 				.any(|s| s.artwork.as_ref() == Some(&artwork_path));
+		}
+	}
+
+	/// Scans a collection made of copies of a song and of an image, at the specified
+	/// locations. Returns the artwork of each song.
+	fn scan_artwork(
+		test_name: String,
+		files: &[&str],
+		artwork_regex: &str,
+	) -> std::collections::HashMap<String, Option<String>> {
+		let collection_dir = crate::test::prepare_test_directory(test_name);
+		let song: PathBuf = ["test-data", "formats", "sample.mp3"].iter().collect();
+		let song_with_artwork: PathBuf = ["test-data", "artwork", "sample.mp3"].iter().collect();
+		let image: PathBuf = ["test-data", "artwork", "Folder.png"].iter().collect();
+		for file in files {
+			let destination = collection_dir.join(PathBuf::from_iter(file.split('/')));
+			fs::create_dir_all(destination.parent().unwrap()).unwrap();
+			let source = match file {
+				f if f.ends_with("embedded.mp3") => &song_with_artwork,
+				f if f.ends_with(".mp3") => &song,
+				_ => &image,
+			};
+			fs::copy(source, destination).unwrap();
+		}
+
+		let (directories_sender, _directories_receiver) = channel();
+		let (songs_sender, songs_receiver) = channel();
+		let parameters = Parameters {
+			artwork_regex: Some(Regex::new(&format!("(?i){artwork_regex}")).unwrap()),
+			exclude_regex: None,
+			mount_dirs: vec![config::MountDir {
+				source: collection_dir,
+				name: "root".to_owned(),
+			}],
+		};
+		Scan::new(directories_sender, songs_sender, parameters)
+			.run()
+			.unwrap();
+
+		let to_string = |p: &Path| {
+			let components = p.components().map(|c| c.as_os_str().to_string_lossy());
+			components.collect::<Vec<_>>().join("/")
+		};
+		songs_receiver
+			.iter()
+			.map(|s| {
+				(
+					to_string(&s.virtual_path),
+					s.artwork.as_deref().map(to_string),
+				)
+			})
+			.collect()
+	}
+
+	#[tokio::test]
+	async fn default_album_art_pattern_covers_common_names() {
+		let artwork = scan_artwork(
+			test_name!(),
+			&[
+				"a/song.mp3",
+				"a/Folder.jpg",
+				"b/song.mp3",
+				"b/cover.png",
+				"c/song.mp3",
+				"c/FRONT.JPEG",
+				"d/song.mp3",
+				"d/album.jpg",
+				"e/song.mp3",
+				"e/back.jpg",
+				"e/cover.jpg.bak",
+				"e/my cover.jpg",
+				"e/AlbumArtSmall.jpg",
+				"f/song.mp3",
+			],
+			config::DEFAULT_ALBUM_ART_PATTERN,
+		);
+		assert_eq!(
+			artwork["root/a/song.mp3"].as_deref(),
+			Some("root/a/Folder.jpg")
+		);
+		assert_eq!(
+			artwork["root/b/song.mp3"].as_deref(),
+			Some("root/b/cover.png")
+		);
+		assert_eq!(
+			artwork["root/c/song.mp3"].as_deref(),
+			Some("root/c/FRONT.JPEG")
+		);
+		assert_eq!(
+			artwork["root/d/song.mp3"].as_deref(),
+			Some("root/d/album.jpg")
+		);
+		assert_eq!(artwork["root/e/song.mp3"], None);
+		assert_eq!(artwork["root/f/song.mp3"], None);
+	}
+
+	#[tokio::test]
+	async fn artwork_choice_does_not_depend_on_file_listing_order() {
+		let artwork = scan_artwork(
+			test_name!(),
+			&[
+				"a/song.mp3",
+				"a/folder.jpg",
+				"a/front.jpg",
+				"a/Cover.jpg",
+				"b/song.mp3",
+				"b/front.jpg",
+				"b/Folder.jpg",
+			],
+			config::DEFAULT_ALBUM_ART_PATTERN,
+		);
+		assert_eq!(
+			artwork["root/a/song.mp3"].as_deref(),
+			Some("root/a/Cover.jpg")
+		);
+		assert_eq!(
+			artwork["root/b/song.mp3"].as_deref(),
+			Some("root/b/Folder.jpg")
+		);
+	}
+
+	#[tokio::test]
+	async fn disc_directories_use_artwork_of_their_album() {
+		let artwork = scan_artwork(
+			test_name!(),
+			&[
+				"artist/album/cover.jpg",
+				"artist/album/CD1/song.mp3",
+				"artist/album/cd 2/song.mp3",
+				"artist/album/Disc 3 - Live/song.mp3",
+				"artist/album/disk_04/song.mp3",
+				"artist/album/CD5/song.mp3",
+				"artist/album/CD5/cover.jpg",
+				"artist/album/CD6/embedded.mp3",
+				"artist/album/CD7/bonus/song.mp3",
+				"artist/album/Vinyl-1/song.mp3",
+			],
+			config::DEFAULT_ALBUM_ART_PATTERN,
+		);
+		let album_artwork = Some("root/artist/album/cover.jpg");
+		for disc in ["CD1", "cd 2", "Disc 3 - Live", "disk_04", "Vinyl-1"] {
+			let song = format!("root/artist/album/{disc}/song.mp3");
+			assert_eq!(artwork[&song].as_deref(), album_artwork, "{disc}");
+		}
+		// Artwork of the disc itself, or of the song, takes precedence
+		assert_eq!(
+			artwork["root/artist/album/CD5/song.mp3"].as_deref(),
+			Some("root/artist/album/CD5/cover.jpg")
+		);
+		assert_eq!(
+			artwork["root/artist/album/CD6/embedded.mp3"].as_deref(),
+			Some("root/artist/album/CD6/embedded.mp3")
+		);
+		// Only disc directories look outside of themselves
+		assert_eq!(artwork["root/artist/album/CD7/bonus/song.mp3"], None);
+	}
+
+	#[tokio::test]
+	async fn other_directories_do_not_use_artwork_of_their_parent() {
+		let artwork = scan_artwork(
+			test_name!(),
+			&[
+				"folder.jpg",
+				"artist/folder.jpg",
+				"artist/album/song.mp3",
+				"artist/CDs/song.mp3",
+				"artist/Discovery/song.mp3",
+				"artist/CD1986 Remaster/song.mp3",
+				"artist/Disco 2/song.mp3",
+				"artist/1/song.mp3",
+				"artist/song.mp3",
+			],
+			config::DEFAULT_ALBUM_ART_PATTERN,
+		);
+		for album in [
+			"album",
+			"CDs",
+			"Discovery",
+			"CD1986 Remaster",
+			"Disco 2",
+			"1",
+		] {
+			let song = format!("root/artist/{album}/song.mp3");
+			assert_eq!(artwork[&song], None, "{album}");
+		}
+		assert_eq!(
+			artwork["root/artist/song.mp3"].as_deref(),
+			Some("root/artist/folder.jpg")
+		);
+	}
+
+	#[test]
+	fn recognizes_disc_directories() {
+		let disc_directories = [
+			"CD1",
+			"cd1",
+			"CD 1",
+			"CD01",
+			"CD-2",
+			"CD_2",
+			"CD.2",
+			"Disc 1",
+			"disc2",
+			"Disk 3",
+			"DVD1",
+			"LP 2",
+			"Vinyl 1",
+			"CD1 - Bonus Tracks",
+			"Disc 2 (Live)",
+			"CD2_Remixes",
+		];
+		for name in disc_directories {
+			assert!(DISC_DIRECTORY_REGEX.is_match(name), "{name}");
+		}
+
+		let other_directories = [
+			"",
+			"1",
+			"CD",
+			"CDs",
+			"Discovery",
+			"Disco 2",
+			"Disc One",
+			"Discipline",
+			"CD1a",
+			"CD1986",
+			"LP",
+			"2 CD",
+			"Vinyl",
+			"Diskette 1",
+			"CD2Remixes",
+		];
+		for name in other_directories {
+			assert!(!DISC_DIRECTORY_REGEX.is_match(name), "{name}");
 		}
 	}
 
