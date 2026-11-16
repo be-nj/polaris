@@ -175,9 +175,12 @@ impl Manager {
 }
 
 /// Reduces the name of an artist to its letters and digits, so that differences of case,
-/// spacing and punctuation between the collection and the catalog do not matter.
+/// spacing and punctuation between the collection and the catalog do not matter. An
+/// ampersand counts as the word `and`: tags often spell out `Simon And Garfunkel`, which
+/// the catalog knows as `Simon & Garfunkel`.
 fn simplify_artist_name(name: &str) -> String {
-	name.chars()
+	name.replace('&', " and ")
+		.chars()
 		.filter(|c| c.is_alphanumeric())
 		.flat_map(char::to_lowercase)
 		.collect()
@@ -459,6 +462,17 @@ mod test {
 			ctx.manager.get_image("Tobokegao").await,
 			Err(Error::ArtistImageNotFound)
 		));
+	}
+
+	#[test]
+	fn matches_names_spelled_differently() {
+		let same = |a: &str, b: &str| simplify_artist_name(a) == simplify_artist_name(b);
+		assert!(same("Simon And Garfunkel", "Simon & Garfunkel"));
+		assert!(same("Iron and Wine", "Iron&Wine"));
+		assert!(same("Rage Against the Machine", "rage-against-the-machine"));
+		assert!(same("HAIM", "Haim"));
+		assert!(!same("Josh Homme", "Joshua Homme"));
+		assert!(!same("Iron Wine", "Iron & Wine"));
 	}
 
 	#[test]
