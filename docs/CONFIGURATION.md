@@ -98,7 +98,7 @@ Artists are read from the tags of songs, not from the names of directories. A pi
 - Artists who only appear as guests on the albums of others have no picture.
 - Artists whose albums are spread over several directories use the picture found next to most of their songs.
 
-Like album art, pictures of artists are not downloaded unless you ask for it: they have to be saved next to your music, by hand or with the program you use to organize it.
+Like album art, pictures of artists are not downloaded unless you ask for it: they have to be saved next to your music, by hand or with the program you use to organize it. For collections managed by [Lidarr](https://lidarr.audio/), [`contrib/lidarr-artist-pictures.py`](../contrib/lidarr-artist-pictures.py) saves the picture Lidarr has for each artist as `artist.jpg` in the folder of the artist. See the instructions at the top of the script.
 
 ### Looking up pictures online
 
